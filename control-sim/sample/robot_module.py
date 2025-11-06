@@ -1,4 +1,4 @@
-from sample.map_module import Grid
+from map_module import Grid
 
 class Robot:
     def __init__(self, water: int = 100, power: int = 100, home: tuple[int, int] = (0, 0)):
