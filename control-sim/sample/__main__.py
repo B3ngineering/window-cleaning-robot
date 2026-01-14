@@ -1,11 +1,13 @@
 from sample.map_module import Grid
 from sample.robot_module import Robot
+from sample.gui import start_visualization
 
 def main():
-    grid = Grid(10, 10)
+    grid = Grid(width=20, height=15)
     robot = Robot(water=100, power=100, home=(0, 0))
-    robot.clean_tile(grid)
-    print(grid.get_tile(robot.x, robot.y))
+    app = start_visualization(grid=grid, robot=robot)
+    app["root"].mainloop()
+
 
 if __name__ == "__main__":
     main()

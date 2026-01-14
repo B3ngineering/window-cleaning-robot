@@ -1,6 +1,6 @@
 import tkinter as tk
-from map_module import Grid
-from robot_module import Robot
+from sample.map_module import Grid
+from sample.robot_module import Robot
 
 
 def start_visualization(width: int = 1500, height: int = 1500, title: str = "Window Cleaning Sim", grid: Grid = None, robot: Robot = None):
