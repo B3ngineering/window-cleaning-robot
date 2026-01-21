@@ -14,9 +14,15 @@ controller_manager:
 motor_velocity_controller:
   ros__parameters:
     joints:
-      - motor_joint
+      - top_left_motor_joint
+      - top_right_motor_joint
+      - bottom_left_motor_joint
+      - bottom_right_motor_joint
 
 motor_position_controller:
   ros__parameters:
     joints:
-      - motor_joint
+      - top_left_motor_joint
+      - top_right_motor_joint
+      - bottom_left_motor_joint
+      - bottom_right_motor_joint

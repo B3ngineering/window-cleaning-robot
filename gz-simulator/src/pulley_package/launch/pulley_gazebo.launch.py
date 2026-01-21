@@ -16,10 +16,11 @@ def generate_launch_description():
     urdf_file = os.path.join(pkg_share, 'urdf', 'pulley_motor.urdf')
     controller_config = os.path.join(pkg_share, 'config', 'pulley_control.yaml')
     
-    # Process URDF with xacro to substitute controller path
-    robot_description_content = open(urdf_file).read()
+    # Process URDF with xacro
+    robot_description_content = xacro.process_file(urdf_file).toxml()
+    # Replace $(find ...) with actual path for Gazebo plugin
     robot_description_content = robot_description_content.replace(
-        '$(arg controller_config_file)', controller_config
+        '$(find pulley_package)', pkg_share
     )
     robot_description = {'robot_description': robot_description_content}
     
