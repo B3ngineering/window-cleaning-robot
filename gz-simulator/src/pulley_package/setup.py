@@ -15,9 +15,11 @@ setup(
         (os.path.join('share', package_name, 'launch'), 
             glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'urdf'), 
-            glob('urdf/*.urdf')),
+            glob('urdf/*.urdf') + glob('urdf/*.xacro')),
         (os.path.join('share', package_name, 'config'), 
             glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'worlds'), 
+            glob('worlds/*.world')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,6 +31,8 @@ setup(
     entry_points={
         'console_scripts': [
             'control_motor = pulley_package.control_motor:main',
+            'cable_physics = pulley_package.cable_physics:main',
+            'motor_control_gui = pulley_package.motor_control_gui:main',
         ],
     },
 )

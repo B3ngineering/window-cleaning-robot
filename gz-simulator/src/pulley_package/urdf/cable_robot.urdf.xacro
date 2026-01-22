@@ -1,0 +1,425 @@
+<?xml version="1.0"?>
+<robot name="cable_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ============ PARAMETERS ============ -->
+  <xacro:property name="wall_width" value="4.0"/>
+  <xacro:property name="wall_height" value="3.0"/>
+  <xacro:property name="wall_thickness" value="0.1"/>
+  
+  <xacro:property name="pulley_radius" value="0.05"/>
+  <xacro:property name="pulley_thickness" value="0.03"/>
+  <xacro:property name="mount_size" value="0.1"/>
+  
+  <xacro:property name="platform_size" value="0.3"/>
+  <xacro:property name="platform_thickness" value="0.05"/>
+  <xacro:property name="platform_mass" value="2.0"/>
+  
+  <xacro:property name="cable_radius" value="0.005"/>
+  
+  <!-- Pulley corner offsets from wall center -->
+  <xacro:property name="pulley_x_offset" value="${wall_width/2 - 0.2}"/>
+  <xacro:property name="pulley_z_offset" value="${wall_height/2 - 0.2}"/>
+  
+  <!-- Platform corner offsets -->
+  <xacro:property name="platform_corner" value="${platform_size/2}"/>
+
+  <!-- ============ WORLD & BASE ============ -->
+  <link name="world"/>
+
+  <link name="base_link">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="world_joint" type="fixed">
+    <parent link="world"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============ WALL ============ -->
+  <link name="wall">
+    <visual>
+      <geometry>
+        <box size="${wall_width} ${wall_thickness} ${wall_height}"/>
+      </geometry>
+      <material name="brick">
+        <color rgba="0.6 0.3 0.2 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${wall_width} ${wall_thickness} ${wall_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1000.0"/>
+      <inertia ixx="1000" ixy="0.0" ixz="0.0" iyy="1000" iyz="0.0" izz="1000"/>
+    </inertial>
+  </link>
+
+  <joint name="wall_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="wall"/>
+    <origin xyz="0 0 ${wall_height/2}" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="wall">
+    <material>Gazebo/Bricks</material>
+  </gazebo>
+
+  <!-- ============ PULLEY MACRO ============ -->
+  <xacro:macro name="pulley_with_winch" params="name px pz">
+    <!-- Pulley mount -->
+    <link name="${name}_mount">
+      <visual>
+        <geometry>
+          <box size="${mount_size} ${mount_size} ${mount_size}"/>
+        </geometry>
+        <material name="gray">
+          <color rgba="0.4 0.4 0.4 1"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="${mount_size} ${mount_size} ${mount_size}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="1.0"/>
+        <inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
+      </inertial>
+    </link>
+
+    <joint name="${name}_mount_joint" type="fixed">
+      <parent link="wall"/>
+      <child link="${name}_mount"/>
+      <origin xyz="${px} ${wall_thickness/2 + mount_size/2} ${pz}" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Pulley drum (rotating) -->
+    <link name="${name}_drum">
+      <visual>
+        <geometry>
+          <cylinder radius="${pulley_radius}" length="${pulley_thickness}"/>
+        </geometry>
+        <material name="blue">
+          <color rgba="0.2 0.2 0.8 1"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${pulley_radius}" length="${pulley_thickness}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.2"/>
+        <inertia ixx="0.0005" ixy="0.0" ixz="0.0" iyy="0.0005" iyz="0.0" izz="0.00025"/>
+      </inertial>
+    </link>
+
+    <joint name="${name}_motor_joint" type="continuous">
+      <parent link="${name}_mount"/>
+      <child link="${name}_drum"/>
+      <origin xyz="0 ${mount_size/2 + pulley_thickness/2 + 0.01} 0" rpy="${pi/2} 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit effort="50.0" velocity="20.0"/>
+      <dynamics damping="0.5" friction="0.1"/>
+    </joint>
+
+    <gazebo reference="${name}_mount">
+      <material>Gazebo/Grey</material>
+    </gazebo>
+    <gazebo reference="${name}_drum">
+      <material>Gazebo/Blue</material>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- ============ CREATE 4 PULLEYS ============ -->
+  <xacro:pulley_with_winch name="tl" px="${-pulley_x_offset}" pz="${pulley_z_offset}"/>
+  <xacro:pulley_with_winch name="tr" px="${pulley_x_offset}" pz="${pulley_z_offset}"/>
+  <xacro:pulley_with_winch name="bl" px="${-pulley_x_offset}" pz="${-pulley_z_offset}"/>
+  <xacro:pulley_with_winch name="br" px="${pulley_x_offset}" pz="${-pulley_z_offset}"/>
+
+  <!-- ============ SUSPENDED PLATFORM ============ -->
+  <!-- Platform moves freely in XZ plane (on the wall surface) -->
+  <!-- We use prismatic joints to allow movement -->
+  
+  <!-- X-axis rail (horizontal movement) -->
+  <link name="x_rail">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.0001"/>
+    </inertial>
+  </link>
+  
+  <joint name="platform_x_joint" type="prismatic">
+    <parent link="base_link"/>
+    <child link="x_rail"/>
+    <origin xyz="0 0.2 ${wall_height/2}" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="${-wall_width/2 + 0.3}" upper="${wall_width/2 - 0.3}" effort="1000" velocity="2"/>
+    <dynamics damping="5.0"/>
+  </joint>
+  
+  <!-- Z-axis rail (vertical movement) -->
+  <link name="z_rail">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.0001"/>
+    </inertial>
+  </link>
+  
+  <joint name="platform_z_joint" type="prismatic">
+    <parent link="x_rail"/>
+    <child link="z_rail"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="${-wall_height/2 + 0.3}" upper="${wall_height/2 - 0.3}" effort="1000" velocity="2"/>
+    <dynamics damping="5.0"/>
+  </joint>
+  
+  <!-- The actual platform -->
+  <link name="platform">
+    <visual>
+      <geometry>
+        <box size="${platform_size} ${platform_thickness} ${platform_size}"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${platform_size} ${platform_thickness} ${platform_size}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${platform_mass}"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="0.03" ixy="0.0" ixz="0.0" iyy="0.03" iyz="0.0" izz="0.03"/>
+    </inertial>
+  </link>
+  
+  <joint name="platform_attach_joint" type="fixed">
+    <parent link="z_rail"/>
+    <child link="platform"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Platform attachment corners (visual markers for cable attachment) -->
+  <xacro:macro name="platform_corner_marker" params="name cx cz">
+    <link name="platform_${name}">
+      <visual>
+        <geometry>
+          <sphere radius="0.02"/>
+        </geometry>
+        <material name="red">
+          <color rgba="0.8 0.2 0.2 1"/>
+        </material>
+      </visual>
+      <inertial>
+        <mass value="0.01"/>
+        <inertia ixx="0.00001" ixy="0.0" ixz="0.0" iyy="0.00001" iyz="0.0" izz="0.00001"/>
+      </inertial>
+    </link>
+    <joint name="platform_${name}_joint" type="fixed">
+      <parent link="platform"/>
+      <child link="platform_${name}"/>
+      <origin xyz="${cx} 0 ${cz}" rpy="0 0 0"/>
+    </joint>
+    <gazebo reference="platform_${name}">
+      <material>Gazebo/Red</material>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:platform_corner_marker name="tl" cx="${-platform_corner}" cz="${platform_corner}"/>
+  <xacro:platform_corner_marker name="tr" cx="${platform_corner}" cz="${platform_corner}"/>
+  <xacro:platform_corner_marker name="bl" cx="${-platform_corner}" cz="${-platform_corner}"/>
+  <xacro:platform_corner_marker name="br" cx="${platform_corner}" cz="${-platform_corner}"/>
+
+  <gazebo reference="platform">
+    <material>Gazebo/Orange</material>
+    <gravity>true</gravity>
+  </gazebo>
+
+  <!-- ============ ULTRASONIC SENSORS ============ -->
+  <!-- 
+    4 ultrasonic sensors mounted on each side of the platform.
+    Each sensor uses a Gazebo ray sensor to simulate ultrasonic range finding.
+    Range: 0.02m to 4.0m (typical HC-SR04 specs)
+    Field of view: 15 degrees (ultrasonic cone)
+  -->
+  
+  <xacro:property name="sensor_range_min" value="0.02"/>
+  <xacro:property name="sensor_range_max" value="4.0"/>
+  <xacro:property name="sensor_fov" value="0.26"/>  <!-- ~15 degrees in radians -->
+  
+  <!-- Ultrasonic sensor macro -->
+  <xacro:macro name="ultrasonic_sensor" params="name parent x y z roll pitch yaw">
+    <link name="${name}_link">
+      <visual>
+        <geometry>
+          <cylinder radius="0.01" length="0.02"/>
+        </geometry>
+        <material name="blue">
+          <color rgba="0.2 0.2 0.8 1"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="0.01" length="0.02"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.01"/>
+        <inertia ixx="0.000001" ixy="0.0" ixz="0.0" iyy="0.000001" iyz="0.0" izz="0.000001"/>
+      </inertial>
+    </link>
+    
+    <joint name="${name}_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${name}_link"/>
+      <origin xyz="${x} ${y} ${z}" rpy="${roll} ${pitch} ${yaw}"/>
+    </joint>
+    
+    <gazebo reference="${name}_link">
+      <material>Gazebo/Blue</material>
+      <sensor type="ray" name="${name}">
+        <pose>0 0 0 0 0 0</pose>
+        <update_rate>10</update_rate>
+        <visualize>true</visualize>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>5</samples>
+              <resolution>1</resolution>
+              <min_angle>${-sensor_fov/2}</min_angle>
+              <max_angle>${sensor_fov/2}</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>5</samples>
+              <resolution>1</resolution>
+              <min_angle>${-sensor_fov/2}</min_angle>
+              <max_angle>${sensor_fov/2}</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>${sensor_range_min}</min>
+            <max>${sensor_range_max}</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.01</stddev>
+          </noise>
+        </ray>
+        <plugin name="${name}_plugin" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <namespace>/ultrasonic</namespace>
+            <remapping>~/out:=${name}</remapping>
+          </ros>
+          <output_type>sensor_msgs/Range</output_type>
+          <radiation_type>ultrasound</radiation_type>
+          <frame_name>${name}_link</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+  
+  <!-- Mount sensors on platform edges, pointing outward -->
+  <!-- Front sensor (positive Y direction - away from wall) -->
+  <xacro:ultrasonic_sensor name="ultrasonic_front" parent="platform"
+    x="0" y="${platform_thickness/2 + 0.01}" z="0"
+    roll="0" pitch="${-pi/2}" yaw="0"/>
+  
+  <!-- Back sensor (negative Y direction - toward wall) -->
+  <xacro:ultrasonic_sensor name="ultrasonic_back" parent="platform"
+    x="0" y="${-platform_thickness/2 - 0.01}" z="0"
+    roll="0" pitch="${pi/2}" yaw="0"/>
+  
+  <!-- Left sensor (negative X direction) -->
+  <xacro:ultrasonic_sensor name="ultrasonic_left" parent="platform"
+    x="${-platform_size/2 - 0.01}" y="0" z="0"
+    roll="0" pitch="${-pi/2}" yaw="${-pi/2}"/>
+  
+  <!-- Right sensor (positive X direction) -->
+  <xacro:ultrasonic_sensor name="ultrasonic_right" parent="platform"
+    x="${platform_size/2 + 0.01}" y="0" z="0"
+    roll="0" pitch="${-pi/2}" yaw="${pi/2}"/>
+
+  <!-- ============ ROS 2 CONTROL ============ -->
+  <ros2_control name="GazeboSystem" type="system">
+    <hardware>
+      <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+    </hardware>
+    <joint name="tl_motor_joint">
+      <command_interface name="velocity">
+        <param name="min">-10</param>
+        <param name="max">10</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="tr_motor_joint">
+      <command_interface name="velocity">
+        <param name="min">-10</param>
+        <param name="max">10</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="bl_motor_joint">
+      <command_interface name="velocity">
+        <param name="min">-10</param>
+        <param name="max">10</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="br_motor_joint">
+      <command_interface name="velocity">
+        <param name="min">-10</param>
+        <param name="max">10</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <!-- Platform position joints (controlled by cable forces) -->
+    <joint name="platform_x_joint">
+      <command_interface name="effort">
+        <param name="min">-500</param>
+        <param name="max">500</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="platform_z_joint">
+      <command_interface name="effort">
+        <param name="min">-500</param>
+        <param name="max">500</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+  </ros2_control>
+
+  <!-- Gazebo ROS2 Control Plugin -->
+  <gazebo>
+    <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+      <robot_param>robot_description</robot_param>
+      <robot_param_node>robot_state_publisher</robot_param_node>
+      <parameters>$(find pulley_package)/config/cable_control.yaml</parameters>
+    </plugin>
+  </gazebo>
+
+</robot>
