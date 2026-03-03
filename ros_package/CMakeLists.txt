@@ -33,3 +33,12 @@ generate_messages(
 catkin_package(
   CATKIN_DEPENDS rospy std_msgs sensor_msgs geometry_msgs message_runtime
 )
+
+catkin_install_python(PROGRAMS
+  nodes/motion_controller.py
+  nodes/navigation_node.py
+  nodes/mock_motor_stm32_bridge.py
+  nodes/mock_sensor_stm32_bridge.py
+  nodes/mock_vision_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
