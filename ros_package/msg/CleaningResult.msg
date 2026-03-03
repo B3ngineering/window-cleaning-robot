@@ -1,0 +1,8 @@
+std_msgs/Header header
+
+float32 x
+float32 y
+uint8 attempt_number
+
+bool clean_successful
+float32 confidence         # 0.0 – 1.0, how confident OpenCV is in the result

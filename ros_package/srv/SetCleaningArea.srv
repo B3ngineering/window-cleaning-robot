@@ -1,0 +1,11 @@
+# Defines window geometry before cleaning run
+
+# Request
+float32 width
+float32 height
+float32 pass_spacing
+
+# Response
+bool accepted
+uint32 num_passes
+string message

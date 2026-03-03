@@ -39,7 +39,7 @@ Message contracts, nodes, systems.
 | /motor_commands | motion_controller | motor_stm32_bridge | window_cleaner/MotorCommand |
 | /joint_states | motor_stm32_bridge | motio_controller | sensor_msgs/JointState |
 | /robot_state | motion_controller | navigation_node | window_cleaner/RobotState |
-| /cleaning_result | vision_node | motion_controller | window_cleaner/CleaningResult |
-| capture_request | navigation_node | vision_node | std_msgs/Bool |
+| /cleaning_result | vision_node | navigation_node | window_cleaner/CleaningResult |
+| /capture_request | navigation_node | vision_node | std_msgs/Bool |
 | /camera/image_raw | vision_node | NA | sensor_msgs/Image |
 | /emergency_stop | sensor_stm32_bridge | motion_controller | window_cleaner/Stop |
