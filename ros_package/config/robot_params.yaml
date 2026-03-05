@@ -21,3 +21,7 @@ confidence_threshold: 0.5  # Minimum confidence for trusting a clean
 # Navigation
 margin: 0.1                   # m, safety margin for navigation
 default_clean_spacing: 0.15   # m, default spacing between clean points
+max_clean_attempts: 3         # Max retries per waypoint before moving on
+home_position_x: 0.78         # Home X position (center of frame)
+home_position_y: 0.66         # Home Y position (center of frame)
+position_log_rate: 1.0        # Hz, rate for logging robot position

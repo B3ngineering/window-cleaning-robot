@@ -2,7 +2,7 @@
 
 # Request
 bool return_home
-
+---
 # Response
 bool accepted
 string message
