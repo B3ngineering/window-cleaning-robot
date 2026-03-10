@@ -1,0 +1,12 @@
+<launch>
+    <rosparam file="$(find window_cleaner)/config/robot_params.yaml" command="load" />
+
+    <!-- Mock hardware layer -->
+    <node name="motor_stm32_bridge" pkg="window_cleaner" type="mock_motor_stm32_bridge.py" output="screen" />
+    <node name="sensor_stm32_bridge" pkg="window_cleaner" type="mock_sensor_stm32_bridge.py" output="screen" />
+    <node name="vision_node" pkg="window_cleaner" type="mock_vision_node.py" output="screen" />
+
+    <!-- Control nodes -->
+    <node name="motion_controller" pkg="window_cleaner" type="motion_controller.py" output="screen" />
+    <node name="navigation_node" pkg="window_cleaner" type="navigation_node.py" output="screen" />
+</launch>

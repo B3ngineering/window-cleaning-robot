@@ -1,0 +1,27 @@
+# Physical dimensions (m)
+pulley_separation_x: 1.56    # Horizontal distance between the two pulleys
+pulley_separation_y: 1.32    # Vertical distance between the two pulleys
+spool_radius: 0.05           # Radius of the pulley spool, will we need this?
+
+# Motor
+steps_per_rev: 3200          # 200 steps/rev * 16 microsteps
+max_speed_rpm: 3000
+
+# Motion Controller
+state_publish_rate: 10.0  # Hz
+position_tolerance: 0.01  # m
+
+# Robot platform dimensions (m) (VERIFY WITH AMY)
+robot_width: 0.2
+robot_height: 0.3
+
+# Vision
+confidence_threshold: 0.5  # Minimum confidence for trusting a clean
+
+# Navigation
+margin: 0.1                   # m, safety margin for navigation
+default_clean_spacing: 0.15   # m, default spacing between clean points
+max_clean_attempts: 3         # Max retries per waypoint before moving on
+home_position_x: 0.78         # Home X position (center of frame)
+home_position_y: 0.66         # Home Y position (center of frame)
+position_log_rate: 1.0        # Hz, rate for logging robot position

@@ -1,0 +1,8 @@
+# Service to halt the current run, called by operator or watchdog
+
+# Request
+bool return_home
+---
+# Response
+bool accepted
+string message
