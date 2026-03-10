@@ -1,3 +1,4 @@
+import queue
 import threading
 import time
 
@@ -17,6 +18,7 @@ class OnboardCameraStream:
         frame_width=640,
         frame_height=480,
         fps=30,
+        event_queue=None,
     ):
         self.model = YOLO(model_path)
         self.camera_index = camera_index
@@ -24,12 +26,14 @@ class OnboardCameraStream:
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.fps = fps
+        self.event_queue = event_queue
 
         self.cap = None
         self.thread = None
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
         self.latest = None
+        self.results_queue = queue.Queue()
 
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -69,6 +73,12 @@ class OnboardCameraStream:
             return default
         return result["value"]
 
+    def get_next(self, timeout=None):
+        try:
+            return self.results_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
     def set_dirty_threshold(self, threshold):
         self.dirty_threshold = threshold
 
@@ -84,6 +94,15 @@ class OnboardCameraStream:
 
             with self.lock:
                 self.latest = prediction
+
+            self.results_queue.put(dict(prediction))
+            if self.event_queue is not None:
+                self.event_queue.put(
+                    {
+                        "source": "camera",
+                        "data": dict(prediction),
+                    }
+                )
 
     def _prediction_to_binary(self, result):
         predicted = result.names[result.probs.top1]
@@ -110,14 +129,8 @@ def main():
     stream.start()
 
     try:
-        last_timestamp = None
         while True:
-            result = stream.read()
-            if result is None or result["timestamp"] == last_timestamp:
-                time.sleep(0.01)
-                continue
-
-            last_timestamp = result["timestamp"]
+            result = stream.get_next()
             print(result["value"])
     except KeyboardInterrupt:
         pass
