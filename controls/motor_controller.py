@@ -2,7 +2,10 @@
 Motor controller for 4-motor cable window cleaning robot.
 
 Handles position tracking, kinematics computation, and motor command generation.
-Uses 3 active cables: TL, TR, BL (indices 0, 1, 2). Motor 4 (BR) reserved.
+Uses 3 active cables: TL, TR, BL. Motor 2 (BR) reserved.
+
+Motor indices (matching serial code):
+  BL=0, TR=1, BR=2 (reserved), TL=3
 
 Sends commands to a separate STM32 motor controller board via serial.
 Command format: [[dir,rot,spd],[dir,rot,spd],[dir,rot,spd],[dir,rot,spd]]\n
@@ -18,14 +21,19 @@ from dataclasses import dataclass, field
 from kinematics import CableGeometry, RobotConfig, load_config
 
 
-# Motor indices
-MOTOR_TL = 0  # Top-Left
+# Motor indices (matching serial code)
+MOTOR_BL = 0  # Bottom-Left
 MOTOR_TR = 1  # Top-Right
-MOTOR_BL = 2  # Bottom-Left
-MOTOR_BR = 3  # Bottom-Right (reserved, sends zeros)
+MOTOR_BR = 2  # Bottom-Right (reserved, sends zeros)
+MOTOR_TL = 3  # Top-Left
 
 NUM_CABLES = 3   # Active cables for kinematics
 NUM_MOTORS = 4   # Total motors in command structure
+
+# Active motors and their corresponding geometry/cable indices
+# Geometry order from kinematics: [TL=0, TR=1, BL=2, BR=3]
+ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_TL]  # Motors 0, 1, 3
+MOTOR_TO_CABLE = [2, 1, None, 0]  # Motor index -> cable/geometry index (None = reserved)
 
 
 @dataclass
@@ -184,16 +192,18 @@ class MotorController:
             return None
         
         # Build command for all 4 motors
+        # Map geometry/cable indices to motor indices
         command = MoveCommand()
-        for i in range(NUM_CABLES):
-            if abs_rotations[i] > 0.001:
+        for motor_idx in ACTIVE_MOTORS:
+            cable_idx = MOTOR_TO_CABLE[motor_idx]
+            if abs_rotations[cable_idx] > 0.001:
                 # Scale speed proportionally so all motors finish at same time
-                speed = (abs_rotations[i] / max_rotations) * self.max_speed_rpm
+                speed = (abs_rotations[cable_idx] / max_rotations) * self.max_speed_rpm
                 # Direction: positive delta = lengthen cable = 1, negative = shorten = -1
-                direction = 1 if delta_rotations[i] >= 0 else -1
-                command.motors[i] = [direction, abs(delta_rotations[i]), speed]
+                direction = 1 if delta_rotations[cable_idx] >= 0 else -1
+                command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
         
-        # Motor 3 (BR) stays as zeros - reserved for future use
+        # Motor 2 (BR) stays as zeros - reserved for future use
         
         return command
     
