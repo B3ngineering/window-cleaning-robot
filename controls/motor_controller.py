@@ -1,45 +1,54 @@
 """
-Motor controller for 3-cable window cleaning robot.
+Motor controller for 4-motor cable window cleaning robot.
 
 Handles position tracking, kinematics computation, and motor command generation.
-Uses 3 cables: TL, TR, BL (indices 0, 1, 2).
+Uses 3 active cables: TL, TR, BL (indices 0, 1, 2). Motor 4 (BR) reserved.
 
 Sends commands to a separate STM32 motor controller board via serial.
-Command format: <motor_id>,<direction>,<rotations>,<speed_rpm>\n
+Command format: [[dir,rot,spd],[dir,rot,spd],[dir,rot,spd],[dir,rot,spd]]\n
 """
 
 import math
 import numpy as np
 import serial
 import time
-from typing import Optional, Tuple
-from dataclasses import dataclass
+from typing import Optional, Tuple, List
+from dataclasses import dataclass, field
 
 from kinematics import CableGeometry, RobotConfig, load_config
 
 
-# Motor indices for 3-cable system
+# Motor indices
 MOTOR_TL = 0  # Top-Left
 MOTOR_TR = 1  # Top-Right
 MOTOR_BL = 2  # Bottom-Left
+MOTOR_BR = 3  # Bottom-Right (reserved, sends zeros)
 
-NUM_CABLES = 3
+NUM_CABLES = 3   # Active cables for kinematics
+NUM_MOTORS = 4   # Total motors in command structure
 
 
 @dataclass
-class MotorCommand:
-    """Command to send to STM32 motor controller."""
-    motor_id: int
-    direction: int      # 1 = lengthen cable (unwind), -1 = shorten (wind)
-    rotations: float    # Number of motor rotations
-    speed_rpm: float    # Motor speed in RPM
+class MoveCommand:
+    """
+    Unified command for all 4 motors.
+    
+    Each motor has [direction, rotations, speed_rpm]:
+    - direction: 1 = lengthen cable (unwind), -1 = shorten (wind), 0 = no movement
+    - rotations: Number of motor rotations (absolute value)
+    - speed_rpm: Motor speed in RPM
+    """
+    motors: List[List] = field(default_factory=lambda: [[0, 0.0, 0] for _ in range(NUM_MOTORS)])
     
     def to_serial(self) -> str:
         """
         Convert to serial command string for STM32.
-        Format: <motor_id>,<direction>,<rotations>,<speed_rpm>
+        Format: [[dir,rot,spd],[dir,rot,spd],[dir,rot,spd],[dir,rot,spd]]
         """
-        return f"{self.motor_id},{self.direction},{self.rotations:.4f},{int(self.speed_rpm)}"
+        motor_strs = []
+        for m in self.motors:
+            motor_strs.append(f"[{m[0]},{m[1]:.4f},{int(m[2])}]")
+        return "[" + ",".join(motor_strs) + "]"
 
 
 class MotorController:
@@ -142,19 +151,18 @@ class MotorController:
         """Validate a target position."""
         return self.geometry.validate_position(x, y)
     
-    def compute_move(self, target_x: float, target_y: float) -> Optional[list]:
+    def compute_move(self, target_x: float, target_y: float) -> Optional[MoveCommand]:
         """
-        Compute motor commands to move to target position.
+        Compute motor command to move to target position.
         
         Calculates cable length deltas from kinematics, converts to motor
-        rotations, and generates coordinated commands for the STM32.
+        rotations, and generates a unified command for all 4 motors.
         
         Returns:
-            List of MotorCommand objects, or None if invalid target
+            MoveCommand with all 4 motors, or None if invalid/already at target
         """
         valid, msg = self.validate_target(target_x, target_y)
         if not valid:
-            print(f"Invalid target: {msg}")
             return None
         
         target = np.array([target_x, target_y])
@@ -173,23 +181,21 @@ class MotorController:
         max_rotations = np.max(abs_rotations)
         
         if max_rotations < 0.001:  # Less than 1/1000 of a rotation - already at target
-            return []
+            return None
         
-        commands = []
+        # Build command for all 4 motors
+        command = MoveCommand()
         for i in range(NUM_CABLES):
             if abs_rotations[i] > 0.001:
                 # Scale speed proportionally so all motors finish at same time
                 speed = (abs_rotations[i] / max_rotations) * self.max_speed_rpm
                 # Direction: positive delta = lengthen cable = 1, negative = shorten = -1
                 direction = 1 if delta_rotations[i] >= 0 else -1
-                commands.append(MotorCommand(
-                    motor_id=i,
-                    direction=direction,
-                    rotations=abs(delta_rotations[i]),
-                    speed_rpm=speed
-                ))
+                command.motors[i] = [direction, abs(delta_rotations[i]), speed]
         
-        return commands
+        # Motor 3 (BR) stays as zeros - reserved for future use
+        
+        return command
     
     def goto(self, x: float, y: float) -> bool:
         """
@@ -200,19 +206,22 @@ class MotorController:
         if self._paused:
             print("Cannot move: paused")
             return False
-            
-        commands = self.compute_move(x, y)
-        if commands is None:
-            return False
         
-        if len(commands) == 0:
+        # Validate target first
+        valid, msg = self.validate_target(x, y)
+        if not valid:
+            print(f"Invalid target: {msg}")
+            return False
+            
+        command = self.compute_move(x, y)
+        if command is None:
+            # compute_move returns None if already at target (max_rotations < 0.001)
             print(f"Already at position ({x:.3f}, {y:.3f})")
             return True
         
-        # Send commands
+        # Send unified command for all 4 motors
         self._is_moving = True
-        for cmd in commands:
-            self._send_command(cmd)
+        self._send_command(command)
         
         # Update internal state (assume move completes)
         target = np.array([x, y])
@@ -258,7 +267,9 @@ class MotorController:
     def stop(self):
         """Emergency stop - halt all motors."""
         self._is_moving = False
-        self._send_raw("STOP")
+        # Send all-zeros command to stop all motors
+        stop_cmd = MoveCommand()  # Default is all zeros
+        self._send_command(stop_cmd)
     
     def pause(self):
         """Pause motion."""
@@ -279,7 +290,7 @@ class MotorController:
             'connected': self.is_connected,
         }
     
-    def _send_command(self, cmd: MotorCommand):
+    def _send_command(self, cmd: MoveCommand):
         """Send motor command via serial to STM32."""
         msg = cmd.to_serial()
         print(f"Motor cmd: {msg}")
