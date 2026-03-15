@@ -4,11 +4,15 @@ Motor controller for 4-motor cable window cleaning robot.
 Handles position tracking, kinematics computation, and motor command generation.
 Uses 3 active cables: TL, TR, BL. Motor 2 (BR) reserved.
 
-Motor indices (matching serial code):
-  BL=0, TR=1, BR=2 (reserved), TL=3
+Internal motor indices:
+    BL=0, TR=1, BR=2 (reserved), TL=3
 
-Sends commands to a separate STM32 motor controller board via serial.
-Command format: [[dir,rot,spd],[dir,rot,spd],[dir,rot,spd],[dir,rot,spd]]\n
+STM32 motor IDs:
+    BR=1, TL=2, BL=3, TR=4
+
+Serial packet format:
+    [count, motor_id, dir, speed_hi, speed_lo, pulses_hi, pulses_lo, ...]
+where speed is encoded as steps/sec // 10 and pulses are step counts.
 """
 
 import math
@@ -35,6 +39,18 @@ NUM_MOTORS = 4   # Total motors in command structure
 ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_TL]  # Motors 0, 1, 3
 MOTOR_TO_CABLE = [2, 1, None, 0]  # Motor index -> cable/geometry index (None = reserved)
 
+# STM32 direction byte values
+DIR_CW  = 0  # Clockwise  (shortens cable / winds)
+DIR_CCW = 1  # Counter-clockwise (lengthens cable / unwinds)
+
+# STM32 board motor IDs from sample control code
+STM_MOTOR_IDS = {
+    MOTOR_BR: 1,
+    MOTOR_TL: 2,
+    MOTOR_BL: 3,
+    MOTOR_TR: 4,
+}
+
 
 @dataclass
 class MoveCommand:
@@ -42,15 +58,17 @@ class MoveCommand:
     Unified command for all 4 motors.
     
     Each motor has [direction, rotations, speed_rpm]:
-    - direction: 1 = lengthen cable (unwind), -1 = shorten (wind), 0 = no movement
+    - direction: 1 = lengthen cable (unwind / CCW), -1 = shorten (wind / CW), 0 = no movement
     - rotations: Number of motor rotations (absolute value)
     - speed_rpm: Motor speed in RPM
+
+    STM32 wire encoding: CW = 0, CCW = 1  (see DIR_CW / DIR_CCW constants)
     """
     motors: List[List] = field(default_factory=lambda: [[0, 0.0, 0] for _ in range(NUM_MOTORS)])
     
-    def to_serial(self) -> str:
+    def to_debug_string(self) -> str:
         """
-        Convert to serial command string for STM32.
+        Convert to readable command string for logging.
         Format: [[dir,rot,spd],[dir,rot,spd],[dir,rot,spd],[dir,rot,spd]]
         """
         motor_strs = []
@@ -109,6 +127,7 @@ class MotorController:
                 baudrate=self.baud_rate,
                 timeout=self.serial_timeout
             )
+            time.sleep(0.1)
             print(f"Connected to motor controller on {self.motor_port}")
             return True
         except Exception as e:
@@ -199,7 +218,7 @@ class MotorController:
             if abs_rotations[cable_idx] > 0.001:
                 # Scale speed proportionally so all motors finish at same time
                 speed = (abs_rotations[cable_idx] / max_rotations) * self.max_speed_rpm
-                # Direction: positive delta = lengthen cable = 1, negative = shorten = -1
+                # Direction: positive delta = lengthen cable (CCW=1), negative = shorten (CW=-1)
                 direction = 1 if delta_rotations[cable_idx] >= 0 else -1
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
         
@@ -302,14 +321,46 @@ class MotorController:
     
     def _send_command(self, cmd: MoveCommand):
         """Send motor command via serial to STM32."""
-        msg = cmd.to_serial()
-        print(f"Motor cmd: {msg}")
-        self._send_raw(msg)
+        packet = self._build_packet(cmd)
+        print(f"Motor cmd: {cmd.to_debug_string()}")
+        print(f"Motor packet: {list(packet)}")
+        self._send_raw(packet)
     
-    def _send_raw(self, message: str):
-        """Send raw message to motor STM32 via serial."""
+    def _build_packet(self, cmd: MoveCommand) -> bytes:
+        """Build STM32 packet matching the expected binary wire format."""
+        commands = []
+
+        for motor_idx in ACTIVE_MOTORS:
+            direction, rotations, speed_rpm = cmd.motors[motor_idx]
+            if direction == 0 or rotations <= 0 or speed_rpm <= 0:
+                continue
+
+            stm_motor_id = STM_MOTOR_IDS[motor_idx]
+            stm_direction = DIR_CCW if direction > 0 else DIR_CW  # CW=0, CCW=1
+            steps_per_sec = max(1, int(round((float(speed_rpm) * self.steps_per_rev) / 60.0)))
+            speed_enc = min(0xFFFF, steps_per_sec // 10)
+            pulses = max(1, int(round(float(rotations) * self.steps_per_rev)))
+            pulses = min(0xFFFF, pulses)
+
+            commands.append((stm_motor_id, stm_direction, speed_enc, pulses))
+
+        packet = bytearray([len(commands)])
+        for motor_id, direction, speed_enc, pulses in commands:
+            packet.extend([
+                motor_id,
+                direction,
+                (speed_enc >> 8) & 0xFF,
+                speed_enc & 0xFF,
+                (pulses >> 8) & 0xFF,
+                pulses & 0xFF,
+            ])
+
+        return bytes(packet)
+
+    def _send_raw(self, packet: bytes):
+        """Send raw binary packet to motor STM32 via serial."""
         if self._serial and self._serial.is_open:
             try:
-                self._serial.write((message + '\n').encode('utf-8'))
+                self._serial.write(packet)
             except Exception as e:
                 print(f"Serial write error: {e}")

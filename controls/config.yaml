@@ -12,7 +12,7 @@ robot:
 motor:
   spool_radius: 0.025      # Radius of cable spool (m)
   steps_per_rev: 1600     # 200 steps/rev * 16 microsteps
-  max_speed_rpm: 300
+  max_speed_rpm: 30
 
 # Motion Control
 motion:

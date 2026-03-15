@@ -49,6 +49,10 @@ ACTIVE_MOTORS = [0, 1, 3]  # BL, TR, TL
 NUM_MOTORS = 4
 NUM_CABLES = 3
 
+# STM32 direction byte values (mirrors motor_controller.py)
+DIR_CW  = 0  # Clockwise  (shortens cable / winds)
+DIR_CCW = 1  # Counter-clockwise (lengthens cable / unwinds)
+
 
 @dataclass
 class MotorCommand:
@@ -56,8 +60,9 @@ class MotorCommand:
     Motor command matching serial format.
     
     Each motor has [direction, rotations, speed_rpm]:
-    - direction: 1 = lengthen cable, -1 = shorten, 0 = no movement
+    - direction: 1 = lengthen cable (unwind / CCW), -1 = shorten (wind / CW), 0 = no movement
     - rotations: Number of motor rotations (absolute)
+    STM32 wire encoding: CW = 0, CCW = 1  (see DIR_CW / DIR_CCW constants)
     - speed_rpm: Motor speed in RPM
     """
     motors: List[List] = field(default_factory=lambda: [[0, 0.0, 0] for _ in range(NUM_MOTORS)])
@@ -406,7 +411,7 @@ class RobotVisualizer:
             if abs_rotations[cable_idx] > 0.001:
                 # Scale speed proportionally so all motors finish at same time
                 speed = (abs_rotations[cable_idx] / max_rotations) * self.max_speed_rpm
-                # Direction: positive delta = lengthen cable = 1, negative = shorten = -1
+                # Direction: positive delta = lengthen cable (CCW=1), negative = shorten (CW=-1)
                 direction = 1 if delta_rotations[cable_idx] >= 0 else -1
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
         
