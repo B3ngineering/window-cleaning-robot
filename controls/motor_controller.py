@@ -27,9 +27,9 @@ from kinematics import CableGeometry, RobotConfig, load_config
 
 # Motor indices (matching serial code)
 MOTOR_BL = 0  # Bottom-Left
-MOTOR_TR = 1  # Top-Right
+MOTOR_TR = 3  # Top-Right
 MOTOR_BR = 2  # Bottom-Right (reserved, sends zeros)
-MOTOR_TL = 3  # Top-Left
+MOTOR_TL = 1  # Top-Left
 
 NUM_CABLES = 3   # Active cables for kinematics
 NUM_MOTORS = 4   # Total motors in command structure
@@ -39,7 +39,9 @@ NUM_MOTORS = 4   # Total motors in command structure
 ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_TL]  # Motors 0, 1, 3
 MOTOR_TO_CABLE = [2, 1, None, 0]  # Motor index -> cable/geometry index (None = reserved)
 
-# Direction encoding (must match STM32 wire format)
+# Direction encoding used internally by the controller.
+# The top motors (TL/TR) match this encoding on the wire, while the
+# bottom motors (BL/BR) are wired in reverse and must be flipped before send.
 DIR_CCW = 0  # Counter-clockwise: lengthen cable (unwind)
 DIR_CW = 1   # Clockwise: shorten cable (wind)
 
@@ -246,15 +248,31 @@ class MotorController:
             # compute_move returns None if already at target (max_rotations < 0.001)
             print(f"Already at position ({x:.3f}, {y:.3f})")
             return True
+
+        target = np.array([x, y])
+        target_cable_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
+        delta_lengths = target_cable_lengths - self._cable_lengths
+
+        print(
+            "Target cables (m): "
+            f"TL={target_cable_lengths[0]:.4f} "
+            f"TR={target_cable_lengths[1]:.4f} "
+            f"BL={target_cable_lengths[2]:.4f}"
+        )
+        print(
+            "Cable delta (m):   "
+            f"TL={delta_lengths[0]:+0.4f} "
+            f"TR={delta_lengths[1]:+0.4f} "
+            f"BL={delta_lengths[2]:+0.4f}"
+        )
         
         # Send unified command for all 4 motors
         self._is_moving = True
         self._send_command(command)
         
         # Update internal state (assume move completes)
-        target = np.array([x, y])
         self._position = target
-        self._cable_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
+        self._cable_lengths = target_cable_lengths
         self._is_moving = False
         
         return True
@@ -319,6 +337,7 @@ class MotorController:
     def _send_command(self, cmd: MoveCommand):
         """Send motor command via serial to STM32."""
         packet = self._build_packet(cmd)
+        
         print(f"Motor cmd: {cmd.to_debug_string()}")
         print(f"Motor packet: {list(packet)}")
         self._send_raw(packet)
@@ -326,8 +345,8 @@ class MotorController:
     def _send_emergency_stop_packet(self):
         """Send explicit zero-speed stop command for all motors."""
         commands = []
-        for stm_motor_id in STM_MOTOR_IDS.values():
-            commands.append((stm_motor_id, DIR_CCW, 0, 0))
+        for motor_idx, stm_motor_id in STM_MOTOR_IDS.items():
+            commands.append((stm_motor_id, self._encode_motor_direction(motor_idx, DIR_CCW), 0, 0))
 
         packet = bytearray([len(commands)])
         for motor_id, direction, steps_per_sec, pulses in commands:
@@ -357,7 +376,7 @@ class MotorController:
                 continue
 
             stm_motor_id = STM_MOTOR_IDS[motor_idx]
-            stm_direction = direction
+            stm_direction = self._encode_motor_direction(motor_idx, direction)
             steps_per_sec = max(1, int((float(speed_rpm) * self.steps_per_rev) / 60.0))
             pulses = max(1, int(round(float(rotations) * self.steps_per_rev)))
             steps_per_sec = min(0xFFFF, steps_per_sec)
@@ -379,6 +398,12 @@ class MotorController:
             ])
 
         return bytes(packet)
+
+    def _encode_motor_direction(self, motor_idx: int, direction: int) -> int:
+        """Convert controller direction to the motor's wiring-specific wire value."""
+        if motor_idx in (MOTOR_BL, MOTOR_BR):
+            return DIR_CW if direction == DIR_CCW else DIR_CCW
+        return direction
 
     def _send_raw(self, packet: bytes):
         """Send raw binary packet to motor STM32 via serial."""
