@@ -22,6 +22,7 @@ import threading
 import queue
 import time
 import argparse
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -120,6 +121,11 @@ class RobotVisualizer:
             position=home_pos.copy(),
             cable_lengths=self.geometry.position_to_cable_lengths(home_pos)[:NUM_CABLES]
         )
+
+        # Clean routine simulation state
+        self.clean_max_attempts = 3
+        self.clean_success_probability = self.config_dict.get('simulation', {}).get('clean_success_probability', 0.6)
+        self.clean_session = None
         
         # Setup matplotlib figure
         self._setup_plot()
@@ -241,10 +247,18 @@ class RobotVisualizer:
         
         # Update status text
         cable_lengths = self.geometry.position_to_cable_lengths(pos)[:NUM_CABLES]
+        clean_status = "IDLE"
+        if self.clean_session and self.clean_session.get("active"):
+            clean_status = (
+                f"{self.clean_session['phase']} "
+                f"({self.clean_session['attempt']}/{self.clean_session['max_attempts']})"
+            )
+
         status = (
             f"Position: ({pos[0]:.3f}, {pos[1]:.3f})\n"
             f"Cables: TL={cable_lengths[0]:.3f} TR={cable_lengths[1]:.3f} BL={cable_lengths[2]:.3f}\n"
-            f"Status: {'MOVING' if self.state.is_moving else 'IDLE'}"
+            f"Status: {'MOVING' if self.state.is_moving else 'IDLE'}\n"
+            f"Clean: {clean_status}"
         )
         if self.state.target_position is not None and self.state.is_moving:
             status += f"\nTarget: ({self.state.target_position[0]:.3f}, {self.state.target_position[1]:.3f})"
@@ -321,6 +335,9 @@ class RobotVisualizer:
                 
                 self.state.is_moving = False
                 self.state.motor_command = None
+
+                if self.clean_session and self.clean_session.get("active"):
+                    self._advance_clean_session_after_move()
         
         self._update_visuals()
         return [self.robot_patch, self.robot_center, self.target_marker, 
@@ -362,10 +379,16 @@ class RobotVisualizer:
         elif action == "home":
             home_pos = self.geometry.get_home_position()
             self._start_move_to(home_pos[0], home_pos[1])
+
+        elif action == "clean":
+            self._start_clean_session()
         
         elif action == "stop":
             self.state.is_moving = False
             self.state.target_position = None
+            if self.clean_session and self.clean_session.get("active"):
+                self.clean_session["active"] = False
+                print("Clean routine stopped")
         
         elif action == "setpos":
             if len(args) >= 2:
@@ -377,6 +400,70 @@ class RobotVisualizer:
                         self.state.cable_lengths = self.geometry.position_to_cable_lengths(self.state.position)[:NUM_CABLES]
                 except ValueError:
                     pass
+
+    def _simulate_clean_result(self) -> bool:
+        """Return True when clean is detected, False when dirty is detected."""
+        return random.random() < self.clean_success_probability
+
+    def _start_clean_session(self):
+        """Start CLEANING->CHECKING simulated loop with retries."""
+        if self.clean_session and self.clean_session.get("active"):
+            print("Clean routine already running")
+            return
+
+        current_x = float(self.state.position[0])
+        self.clean_session = {
+            "active": True,
+            "phase": "CLEANING",
+            "attempt": 1,
+            "max_attempts": self.clean_max_attempts,
+            "x": current_x,
+        }
+
+        bottom_y = float(self.geometry.workspace_min[1])
+        print(f"[clean] Attempt 1/{self.clean_max_attempts}: CLEANING down to y={bottom_y:.3f}")
+        self._start_move_to(current_x, bottom_y)
+
+    def _advance_clean_session_after_move(self):
+        """Advance clean routine after each completed move."""
+        if not self.clean_session or not self.clean_session.get("active"):
+            return
+
+        phase = self.clean_session.get("phase")
+        x = float(self.clean_session.get("x", self.state.position[0]))
+
+        if phase == "CLEANING":
+            self.clean_session["phase"] = "CHECKING"
+            top_y = float(self.geometry.workspace_max[1])
+            print(f"[clean] CHECKING up to y={top_y:.3f}")
+            self._start_move_to(x, top_y)
+            return
+
+        if phase == "CHECKING":
+            clean_detected = self._simulate_clean_result()
+            print(f"[clean] CHECKING result: {'clean' if clean_detected else 'dirty'}")
+
+            if clean_detected:
+                self.clean_session["active"] = False
+                self.clean_session["phase"] = "IDLE"
+                print("[clean] Routine completed: window confirmed clean")
+                return
+
+            if self.clean_session["attempt"] >= self.clean_session["max_attempts"]:
+                self.clean_session["active"] = False
+                self.clean_session["phase"] = "IDLE"
+                print("[clean] Routine ended without clean confirmation")
+                return
+
+            self.clean_session["attempt"] += 1
+            self.clean_session["phase"] = "CLEANING"
+            self.clean_session["x"] = float(self.state.position[0])
+            bottom_y = float(self.geometry.workspace_min[1])
+            print(
+                f"[clean] Attempt {self.clean_session['attempt']}/{self.clean_session['max_attempts']}: "
+                f"CLEANING down to y={bottom_y:.3f}"
+            )
+            self._start_move_to(self.clean_session["x"], bottom_y)
     
     def _compute_motor_command(self, target_x: float, target_y: float) -> Optional[MotorCommand]:
         """

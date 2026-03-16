@@ -53,6 +53,14 @@ class SerialStream:
         except queue.Empty:
             return None
 
+    def start_cleaning_motors(self):
+        """Placeholder for sensor-STM cleaning motor start commands."""
+        print("[sensor-stm placeholder] start cleaning motors: continuous=ON, fixed-rotation=TRIGGER")
+
+    def stop_cleaning_motors(self):
+        """Placeholder for sensor-STM cleaning motor stop commands."""
+        print("[sensor-stm placeholder] stop cleaning motors")
+
     def _run(self):
         while not self.stop_event.is_set():
             raw = self.connection.readline()

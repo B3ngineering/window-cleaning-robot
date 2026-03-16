@@ -10,6 +10,7 @@ Commands:
     goto <x> <y>              Move to absolute position (meters)
     move <up|down|left|right> [distance]  Move in direction
     home                      Return to center
+    clean                     Run CLEANING/CHECKING routine
     stop                      Emergency stop
     setpos <x> <y>            Set current position (calibration)
     status                    Show current status
@@ -40,7 +41,7 @@ def send_command(command: str) -> str:
 def interactive_mode():
     """Run in interactive mode."""
     print("Robot Visualizer Command Client")
-    print("Commands: goto <x> <y>, move <dir> [dist], home, stop, setpos <x> <y>")
+    print("Commands: goto <x> <y>, move <dir> [dist], home, clean, stop, setpos <x> <y>")
     print("Ctrl+C to exit")
     print("-" * 50)
     

@@ -10,6 +10,9 @@ from motor_controller import MotorController
 
 COMMAND_SOCKET_PATH = "/tmp/window_robot_cmd.sock"
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.yaml")
+CLEAN_VOTE_FRAMES = 3
+CLEAN_MAX_ATTEMPTS = 3
+CAMERA_CHECK_TIMEOUT_SEC = 15.0
 
 
 def start_command_server(event_queue, stop_event):
@@ -81,7 +84,7 @@ def main():
     try:
         camera = OnboardCameraStream(
             dirty_threshold=0.7,
-            event_queue=event_queue,
+            event_queue=None,
         )
     except Exception as e:
         print(f"Camera not available: {e}")
@@ -96,6 +99,98 @@ def main():
         print("Sensor STM32 connected on /dev/ttyUSB1")
     except Exception as e:
         print(f"Sensor serial not available: {e}")
+
+    def run_camera_cleanliness_vote(required_frames=CLEAN_VOTE_FRAMES, timeout_seconds=CAMERA_CHECK_TIMEOUT_SEC):
+        """Return 'clean', 'dirty', or 'timeout' based on consecutive camera frames."""
+        clean_frames = 0
+        dirty_frames = 0
+        deadline = time.time() + timeout_seconds
+
+        while time.time() < deadline:
+            result = camera.get_next(timeout=0.5)
+            if not result:
+                continue
+
+            label = result.get("value")
+            if label == 0:
+                dirty_frames += 1
+                clean_frames = 0
+            else:
+                clean_frames += 1
+                dirty_frames = 0
+
+            if dirty_frames >= required_frames:
+                return "dirty"
+            if clean_frames >= required_frames:
+                return "clean"
+
+        return "timeout"
+
+    def run_clean_command():
+        nonlocal mode
+
+        if camera is None:
+            print("Cannot run clean routine: camera is not available")
+            return
+
+        workspace_min = motor_controller.geometry.workspace_min
+        workspace_max = motor_controller.geometry.workspace_max
+        bottom_y = float(workspace_min[1])
+        top_y = float(workspace_max[1])
+        attempt = 0
+        clean_confirmed = False
+
+        while attempt < CLEAN_MAX_ATTEMPTS and not clean_confirmed:
+            attempt += 1
+            current_x = float(motor_controller.position[0])
+
+            mode = 'CLEANING'
+            print(f"[clean] Attempt {attempt}/{CLEAN_MAX_ATTEMPTS}: CLEANING down to y={bottom_y:.3f}")
+            camera.stop()
+
+            if serial_stream is not None:
+                serial_stream.start_cleaning_motors()
+
+            moved_down = motor_controller.goto(current_x, bottom_y)
+
+            if serial_stream is not None:
+                serial_stream.stop_cleaning_motors()
+
+            if not moved_down:
+                print("[clean] Failed to move to bottom in CLEANING mode")
+                break
+
+            mode = 'CHECKING'
+            print(f"[clean] CHECKING up to y={top_y:.3f}")
+
+            try:
+                camera.start()
+            except Exception as e:
+                print(f"[clean] Could not start camera stream in CHECKING mode: {e}")
+                break
+
+            moved_up = motor_controller.goto(current_x, top_y)
+            if not moved_up:
+                print("[clean] Failed to move to top in CHECKING mode")
+                break
+
+            decision = run_camera_cleanliness_vote()
+            print(f"[clean] CHECKING result: {decision}")
+            camera.stop()
+
+            if decision == "clean":
+                clean_confirmed = True
+            else:
+                print("[clean] Window still dirty, repeating CLEANING pass")
+
+        if camera is not None:
+            camera.stop()
+
+        mode = 'IDLE'
+        if clean_confirmed:
+            print("[clean] Routine completed: window confirmed clean")
+        else:
+            print("[clean] Routine ended without clean confirmation")
 
     # Main event loop
     try:
@@ -112,9 +207,6 @@ def main():
             event = event_queue.get()
             source = event["source"]
             data = event["data"]
-
-            clean_frames = 0
-            dirty_frames = 0
 
             # Handle commands from the client
             if source == "command":
@@ -164,6 +256,10 @@ def main():
                 elif action == "stop":
                     print("Emergency stop")
                     motor_controller.stop()
+                    if serial_stream is not None:
+                        serial_stream.stop_cleaning_motors()
+                    if camera is not None:
+                        camera.stop()
                     mode = 'IDLE'
                 
                 elif action == "pause":
@@ -197,11 +293,15 @@ def main():
                     else:
                         print("Usage: setpos <x> <y>")
                 
+                elif action == "clean":
+                    run_clean_command()
+
                 elif action == "help":
                     print("Commands:")
                     print("  goto <x> <y>        - Move to position (meters)")
                     print("  move <dir> [dist]   - Move direction (up/down/left/right)")
                     print("  home                - Return to center")
+                    print("  clean               - Run clean/check routine (max 3 attempts)")
                     print("  stop                - Emergency stop")
                     print("  pause / resume      - Pause/resume operation")
                     print("  status              - Show position and state")
@@ -213,7 +313,17 @@ def main():
             # Sensor interrupt logic
             elif source == "serial":
                 values = data["value"]
-                lowest = min(values)
+                if isinstance(values, str):
+                    try:
+                        parsed = [int(v.strip()) for v in values.split(",") if v.strip()]
+                    except ValueError:
+                        parsed = []
+                elif isinstance(values, (list, tuple)):
+                    parsed = [int(v) for v in values]
+                else:
+                    parsed = []
+
+                lowest = min(parsed) if parsed else float("inf")
                 print(f"serial={values}")
                 # If we see an obstacle, stop the motors and await commands
                 if lowest < 300:  # Threshold for obstacle detection (in mm)
@@ -222,18 +332,7 @@ def main():
                     mode = 'STOP'
             
             elif source == "camera":
-                label = data["value"]
-                if label == 0:
-                    dirty_frames += 1
-                    clean_frames = 0
-                else:
-                    clean_frames += 1
-                    dirty_frames = 0
-                
-                if dirty_frames >= 3:
-                    print("Dirt detected! Recleaning.")
-                    motor_controller.stop()
-                    mode = 'DIRTY'
+                pass
 
             
     except KeyboardInterrupt:
