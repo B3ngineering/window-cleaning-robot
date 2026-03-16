@@ -253,18 +253,17 @@ class MotorController:
         target_cable_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
         delta_lengths = target_cable_lengths - self._cable_lengths
 
-        print(
-            "Target cables (m): "
-            f"TL={target_cable_lengths[0]:.4f} "
-            f"TR={target_cable_lengths[1]:.4f} "
-            f"BL={target_cable_lengths[2]:.4f}"
-        )
-        print(
-            "Cable delta (m):   "
-            f"TL={delta_lengths[0]:+0.4f} "
-            f"TR={delta_lengths[1]:+0.4f} "
-            f"BL={delta_lengths[2]:+0.4f}"
-        )
+        cable_names = ["TL", "TR", "BL"]
+        print("Cable move plan:")
+        print(f"  {'Cable':<6} {'Current (m)':>12} {'Target (m)':>12} {'Delta (m)':>10} {'Direction'}")
+        print(f"  {'-'*6} {'-'*12} {'-'*12} {'-'*10} {'-'*12}")
+        for i, name in enumerate(cable_names):
+            direction_label = "unwind (CCW)" if delta_lengths[i] >= 0 else "wind   (CW) "
+            print(
+                f"  {name:<6} {self._cable_lengths[i]:>12.4f} "
+                f"{target_cable_lengths[i]:>12.4f} "
+                f"{delta_lengths[i]:>+10.4f} {direction_label}"
+            )
         
         # Send unified command for all 4 motors
         self._is_moving = True
@@ -411,4 +410,4 @@ class MotorController:
             try:
                 self._serial.write(packet)
             except Exception as e:
-                print(f"Serial write error: {e}")
+                print(f"Serial write error: {e}") 
