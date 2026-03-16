@@ -50,8 +50,8 @@ NUM_MOTORS = 4
 NUM_CABLES = 3
 
 # STM32 direction byte values (mirrors motor_controller.py)
-DIR_CW  = 0  # Clockwise  (shortens cable / winds)
-DIR_CCW = 1  # Counter-clockwise (lengthens cable / unwinds)
+DIR_CCW = 0  # Counter-clockwise (lengthens cable / unwinds)
+DIR_CW  = 1  # Clockwise  (shortens cable / winds)
 
 
 @dataclass
@@ -60,9 +60,10 @@ class MotorCommand:
     Motor command matching serial format.
     
     Each motor has [direction, rotations, speed_rpm]:
-    - direction: 1 = lengthen cable (unwind / CCW), -1 = shorten (wind / CW), 0 = no movement
-    - rotations: Number of motor rotations (absolute)
-    STM32 wire encoding: CW = 0, CCW = 1  (see DIR_CW / DIR_CCW constants)
+        - direction: 0 = CCW (lengthen cable / unwind), 1 = CW (shorten cable / wind)
+            (no movement is represented by rotations=0 and/or speed_rpm=0)
+        - rotations: Number of motor rotations (absolute)
+        STM32 wire encoding: CCW = 0, CW = 1 (see DIR_CCW / DIR_CW constants)
     - speed_rpm: Motor speed in RPM
     """
     motors: List[List] = field(default_factory=lambda: [[0, 0.0, 0] for _ in range(NUM_MOTORS)])
@@ -270,7 +271,7 @@ class RobotVisualizer:
             
             for motor_idx in ACTIVE_MOTORS:
                 motor_cmd = self.state.motor_command.motors[motor_idx]
-                direction = motor_cmd[0]  # 1 = lengthen, -1 = shorten
+                direction = motor_cmd[0]  # DIR_CCW=0 (lengthen), DIR_CW=1 (shorten)
                 target_rotations = motor_cmd[1]  # Total rotations to apply
                 speed_rpm = motor_cmd[2]  # Motor speed in RPM
                 
@@ -286,9 +287,11 @@ class RobotVisualizer:
                     move_complete = False
                 
                 # Convert rotations to cable length change
-                # delta_length = direction * rotations * spool_circumference
+                # Convert direction code to sign for cable delta
+                direction_sign = 1.0 if direction == DIR_CCW else -1.0
+                # delta_length = direction_sign * rotations * spool_circumference
                 cable_idx = MOTOR_TO_CABLE[motor_idx]
-                delta_length = direction * rotations_done * spool_circumference
+                delta_length = direction_sign * rotations_done * spool_circumference
                 self.state.cable_lengths[cable_idx] = self.state.start_cable_lengths[cable_idx] + delta_length
             
             # Use forward kinematics to compute position from cable lengths
@@ -411,8 +414,8 @@ class RobotVisualizer:
             if abs_rotations[cable_idx] > 0.001:
                 # Scale speed proportionally so all motors finish at same time
                 speed = (abs_rotations[cable_idx] / max_rotations) * self.max_speed_rpm
-                # Direction: positive delta = lengthen cable (CCW=1), negative = shorten (CW=-1)
-                direction = 1 if delta_rotations[cable_idx] >= 0 else -1
+                # Direction: positive delta = lengthen cable (CCW=0), negative = shorten (CW=1)
+                direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
         
         # Motor 2 (BR) stays as zeros - reserved

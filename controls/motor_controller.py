@@ -39,9 +39,9 @@ NUM_MOTORS = 4   # Total motors in command structure
 ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_TL]  # Motors 0, 1, 3
 MOTOR_TO_CABLE = [2, 1, None, 0]  # Motor index -> cable/geometry index (None = reserved)
 
-# STM32 direction byte values
-DIR_CW  = 0  # Clockwise  (shortens cable / winds)
-DIR_CCW = 1  # Counter-clockwise (lengthens cable / unwinds)
+# Direction encoding (must match STM32 wire format)
+DIR_CCW = 0  # Counter-clockwise: lengthen cable (unwind)
+DIR_CW = 1   # Clockwise: shorten cable (wind)
 
 # STM32 board motor IDs from sample control code
 STM_MOTOR_IDS = {
@@ -58,11 +58,10 @@ class MoveCommand:
     Unified command for all 4 motors.
     
     Each motor has [direction, rotations, speed_rpm]:
-    - direction: 1 = lengthen cable (unwind / CCW), -1 = shorten (wind / CW), 0 = no movement
+        - direction: 0 = CCW (lengthen cable / unwind), 1 = CW (shorten cable / wind)
+            (no movement is represented by rotations=0 and/or speed_rpm=0)
     - rotations: Number of motor rotations (absolute value)
     - speed_rpm: Motor speed in RPM
-
-    STM32 wire encoding: CW = 0, CCW = 1  (see DIR_CW / DIR_CCW constants)
     """
     motors: List[List] = field(default_factory=lambda: [[0, 0.0, 0] for _ in range(NUM_MOTORS)])
     
@@ -218,8 +217,8 @@ class MotorController:
             if abs_rotations[cable_idx] > 0.001:
                 # Scale speed proportionally so all motors finish at same time
                 speed = (abs_rotations[cable_idx] / max_rotations) * self.max_speed_rpm
-                # Direction: positive delta = lengthen cable (CCW=1), negative = shorten (CW=-1)
-                direction = 1 if delta_rotations[cable_idx] >= 0 else -1
+                # Direction: positive delta = lengthen cable (CCW=0), negative = shorten (CW=1)
+                direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
         
         # Motor 2 (BR) stays as zeros - reserved for future use
@@ -296,9 +295,7 @@ class MotorController:
     def stop(self):
         """Emergency stop - halt all motors."""
         self._is_moving = False
-        # Send all-zeros command to stop all motors
-        stop_cmd = MoveCommand()  # Default is all zeros
-        self._send_command(stop_cmd)
+        self._send_emergency_stop_packet()
     
     def pause(self):
         """Pause motion."""
@@ -325,6 +322,28 @@ class MotorController:
         print(f"Motor cmd: {cmd.to_debug_string()}")
         print(f"Motor packet: {list(packet)}")
         self._send_raw(packet)
+
+    def _send_emergency_stop_packet(self):
+        """Send explicit zero-speed stop command for all motors."""
+        commands = []
+        for stm_motor_id in STM_MOTOR_IDS.values():
+            commands.append((stm_motor_id, DIR_CCW, 0, 0))
+
+        packet = bytearray([len(commands)])
+        for motor_id, direction, steps_per_sec, pulses in commands:
+            speed_enc = steps_per_sec // 10
+            packet.extend([
+                motor_id,
+                direction,
+                (speed_enc >> 8) & 0xFF,
+                speed_enc & 0xFF,
+                (pulses >> 8) & 0xFF,
+                pulses & 0xFF,
+            ])
+
+        print("Emergency stop: zero-speed command to all motors")
+        print(f"Motor packet: {list(packet)}")
+        self._send_raw(bytes(packet))
     
     def _build_packet(self, cmd: MoveCommand) -> bytes:
         """Build STM32 packet matching the expected binary wire format."""
@@ -332,20 +351,24 @@ class MotorController:
 
         for motor_idx in ACTIVE_MOTORS:
             direction, rotations, speed_rpm = cmd.motors[motor_idx]
-            if direction == 0 or rotations <= 0 or speed_rpm <= 0:
+            if rotations <= 0 or speed_rpm <= 0:
+                continue
+            if direction not in (DIR_CW, DIR_CCW):
                 continue
 
             stm_motor_id = STM_MOTOR_IDS[motor_idx]
-            stm_direction = DIR_CCW if direction > 0 else DIR_CW  # CW=0, CCW=1
-            steps_per_sec = max(1, int(round((float(speed_rpm) * self.steps_per_rev) / 60.0)))
-            speed_enc = min(0xFFFF, steps_per_sec // 10)
+            stm_direction = direction
+            steps_per_sec = max(1, int((float(speed_rpm) * self.steps_per_rev) / 60.0))
             pulses = max(1, int(round(float(rotations) * self.steps_per_rev)))
+            steps_per_sec = min(0xFFFF, steps_per_sec)
             pulses = min(0xFFFF, pulses)
 
-            commands.append((stm_motor_id, stm_direction, speed_enc, pulses))
+            # commands: [motor_id, dir, steps_per_sec, pulses]
+            commands.append((stm_motor_id, stm_direction, steps_per_sec, pulses))
 
         packet = bytearray([len(commands)])
-        for motor_id, direction, speed_enc, pulses in commands:
+        for motor_id, direction, steps_per_sec, pulses in commands:
+            speed_enc = steps_per_sec // 10
             packet.extend([
                 motor_id,
                 direction,
