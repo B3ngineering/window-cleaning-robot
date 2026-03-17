@@ -92,8 +92,8 @@ def main():
     # Connect to sensor STM32 (separate from motor controller)
     try:
         serial_stream = SerialStream(
-            port="/dev/ttyUSB1",  # Sensor port from config
-            baudrate=115200,
+            port=motor_controller.config.get("sensor_port", "/dev/ttyUSB1"),
+            baudrate=motor_controller.config.get("sensor_baudrate", 115200),
             event_queue=event_queue,
         ).start()
         print("Sensor STM32 connected on /dev/ttyUSB1")
@@ -126,7 +126,7 @@ def main():
 
         return "timeout"
 
-    def run_clean_command():
+    def run_clean_command(distance):
         nonlocal mode
 
         if camera is None:
@@ -134,15 +134,24 @@ def main():
             return
 
         workspace_min = motor_controller.geometry.workspace_min
-        workspace_max = motor_controller.geometry.workspace_max
-        bottom_y = float(workspace_min[1])
-        top_y = float(workspace_max[1])
+        start_y = float(motor_controller.position[1])
+        bottom_y = start_y - float(distance)
+
+        if distance <= 0:
+            print("Usage: clean <distance> (distance in meters, > 0)")
+            return
+
+        if bottom_y < float(workspace_min[1]):
+            print(
+                f"Invalid clean distance: would exceed workspace minimum y={float(workspace_min[1]):.3f}"
+            )
+            return
+
         attempt = 0
         clean_confirmed = False
 
         while attempt < CLEAN_MAX_ATTEMPTS and not clean_confirmed:
             attempt += 1
-            current_x = float(motor_controller.position[0])
 
             mode = 'CLEANING'
             print(f"[clean] Attempt {attempt}/{CLEAN_MAX_ATTEMPTS}: CLEANING down to y={bottom_y:.3f}")
@@ -151,7 +160,7 @@ def main():
             if serial_stream is not None:
                 serial_stream.start_cleaning_motors()
 
-            moved_down = motor_controller.goto(current_x, bottom_y)
+            moved_down = motor_controller.move_direction("down", float(distance))
 
             if serial_stream is not None:
                 serial_stream.stop_cleaning_motors()
@@ -161,7 +170,7 @@ def main():
                 break
 
             mode = 'CHECKING'
-            print(f"[clean] CHECKING up to y={top_y:.3f}")
+            print(f"[clean] CHECKING up to y={start_y:.3f}")
 
             try:
                 camera.start()
@@ -169,7 +178,9 @@ def main():
                 print(f"[clean] Could not start camera stream in CHECKING mode: {e}")
                 break
 
-            moved_up = motor_controller.goto(current_x, top_y)
+            current_y = float(motor_controller.position[1])
+            return_distance = max(0.0, start_y - current_y)
+            moved_up = motor_controller.move_direction("up", return_distance)
             if not moved_up:
                 print("[clean] Failed to move to top in CHECKING mode")
                 break
@@ -294,14 +305,21 @@ def main():
                         print("Usage: setpos <x> <y>")
                 
                 elif action == "clean":
-                    run_clean_command()
+                    if len(args) >= 1:
+                        try:
+                            distance = float(args[0])
+                            run_clean_command(distance)
+                        except ValueError:
+                            print("Usage: clean <distance> (distance in meters)")
+                    else:
+                        print("Usage: clean <distance>")
 
                 elif action == "help":
                     print("Commands:")
                     print("  goto <x> <y>        - Move to position (meters)")
                     print("  move <dir> [dist]   - Move direction (up/down/left/right)")
                     print("  home                - Return to center")
-                    print("  clean               - Run clean/check routine (max 3 attempts)")
+                    print("  clean <distance>    - Clean down by distance, check on return")
                     print("  stop                - Emergency stop")
                     print("  pause / resume      - Pause/resume operation")
                     print("  status              - Show position and state")
