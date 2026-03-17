@@ -40,15 +40,15 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.yaml")
 # Motor indices (matching serial code from motor_controller.py)
 MOTOR_BL = 0  # Bottom-Left
 MOTOR_TR = 1  # Top-Right
-MOTOR_BR = 2  # Bottom-Right (reserved)
+MOTOR_BR = 2  # Bottom-Right
 MOTOR_TL = 3  # Top-Left
 
 # Geometry order from kinematics: [TL=0, TR=1, BL=2, BR=3]
-MOTOR_TO_CABLE = [2, 1, None, 0]  # Motor index -> cable/geometry index
-CABLE_TO_MOTOR = {0: 3, 1: 1, 2: 0}  # Cable/geometry index -> motor index (TL->M3, TR->M1, BL->M0)
-ACTIVE_MOTORS = [0, 1, 3]  # BL, TR, TL
+MOTOR_TO_CABLE = [2, 1, 3, 0]  # Motor index -> cable/geometry index
+CABLE_TO_MOTOR = {0: 3, 1: 1, 2: 0, 3: 2}  # Cable/geometry index -> motor index
+ACTIVE_MOTORS = [0, 1, 2, 3]  # BL, TR, BR, TL
 NUM_MOTORS = 4
-NUM_CABLES = 3
+NUM_CABLES = 4
 
 # STM32 direction byte values (mirrors motor_controller.py)
 DIR_CCW = 0  # Counter-clockwise (lengthens cable / unwinds)
@@ -81,7 +81,7 @@ class MotorCommand:
 class SimState:
     """Simulated robot state with motor-command-driven physics."""
     position: np.ndarray
-    cable_lengths: np.ndarray  # Current lengths [TL, TR, BL] in geometry order
+    cable_lengths: np.ndarray  # Current lengths [TL, TR, BL, BR] in geometry order
     target_position: Optional[np.ndarray] = None
     is_moving: bool = False
     move_start_time: float = 0.0
@@ -119,7 +119,7 @@ class RobotVisualizer:
         home_pos = self.geometry.get_home_position()
         self.state = SimState(
             position=home_pos.copy(),
-            cable_lengths=self.geometry.position_to_cable_lengths(home_pos)[:NUM_CABLES]
+            cable_lengths=self.geometry.position_to_cable_lengths(home_pos)
         )
 
         # Clean routine simulation state
@@ -182,9 +182,9 @@ class RobotVisualizer:
             self.ax.annotate(label, anchor, xytext=(anchor[0] + offset[0], anchor[1] + offset[1]),
                            fontsize=9, color=color)
         
-        # Initialize cable lines (TL, TR, BL - active cables)
+        # Initialize cable lines (TL, TR, BL, BR)
         self.cable_lines = []
-        cable_colors = ['cyan', 'magenta', 'yellow']
+        cable_colors = ['cyan', 'magenta', 'yellow', 'gray']
         for i in range(NUM_CABLES):
             line, = self.ax.plot([], [], '-', color=cable_colors[i], linewidth=1.5, alpha=0.7)
             self.cable_lines.append(line)
@@ -230,7 +230,7 @@ class RobotVisualizer:
         self.robot_center.set_data([pos[0]], [pos[1]])
         
         # Update cables from anchors to robot attachment points
-        # Geometry order: [TL=0, TR=1, BL=2], anchors same order
+        # Geometry order: [TL=0, TR=1, BL=2, BR=3], anchors same order
         for i in range(NUM_CABLES):
             anchor = self.geometry.anchors[i]
             attachment = self.geometry.get_attachment_point(pos, i)
@@ -246,7 +246,7 @@ class RobotVisualizer:
             self.target_marker.set_data([], [])
         
         # Update status text
-        cable_lengths = self.geometry.position_to_cable_lengths(pos)[:NUM_CABLES]
+        cable_lengths = self.geometry.position_to_cable_lengths(pos)
         clean_status = "IDLE"
         if self.clean_session and self.clean_session.get("active"):
             clean_status = (
@@ -256,7 +256,7 @@ class RobotVisualizer:
 
         status = (
             f"Position: ({pos[0]:.3f}, {pos[1]:.3f})\n"
-            f"Cables: TL={cable_lengths[0]:.3f} TR={cable_lengths[1]:.3f} BL={cable_lengths[2]:.3f}\n"
+            f"Cables: TL={cable_lengths[0]:.3f} TR={cable_lengths[1]:.3f} BL={cable_lengths[2]:.3f} BR={cable_lengths[3]:.3f}\n"
             f"Status: {'MOVING' if self.state.is_moving else 'IDLE'}\n"
             f"Clean: {clean_status}"
         )
@@ -308,23 +308,15 @@ class RobotVisualizer:
                 delta_length = direction_sign * rotations_done * spool_circumference
                 self.state.cable_lengths[cable_idx] = self.state.start_cable_lengths[cable_idx] + delta_length
             
-            # Use forward kinematics to compute position from cable lengths
-            full_lengths = np.zeros(4)
-            full_lengths[:NUM_CABLES] = self.state.cable_lengths
-            # BR cable not used in trilateration
-            full_lengths[3] = self.geometry.position_to_cable_lengths(self.state.position)[3]
-            
-            new_position = self.geometry.cable_lengths_to_position(full_lengths)
+            # Use forward kinematics to compute position from all cable lengths
+            new_position = self.geometry.cable_lengths_to_position(self.state.cable_lengths)
             if new_position is not None:
                 self.state.position = new_position
             
             # Check if move is complete
             if move_complete or elapsed >= self.state.move_duration:
                 # Final position from forward kinematics (tests motor command accuracy)
-                final_lengths = np.zeros(4)
-                final_lengths[:NUM_CABLES] = self.state.cable_lengths
-                final_lengths[3] = 0  # Not used
-                final_pos = self.geometry.cable_lengths_to_position(final_lengths)
+                final_pos = self.geometry.cable_lengths_to_position(self.state.cable_lengths)
                 
                 if final_pos is not None:
                     self.state.position = final_pos
@@ -397,7 +389,7 @@ class RobotVisualizer:
                     valid, _ = self.geometry.validate_position(x, y)
                     if valid:
                         self.state.position = np.array([x, y])
-                        self.state.cable_lengths = self.geometry.position_to_cable_lengths(self.state.position)[:NUM_CABLES]
+                        self.state.cable_lengths = self.geometry.position_to_cable_lengths(self.state.position)
                 except ValueError:
                     pass
 
@@ -477,7 +469,7 @@ class RobotVisualizer:
             return None
         
         target = np.array([target_x, target_y])
-        target_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
+        target_lengths = self.geometry.position_to_cable_lengths(target)
         current_lengths = self.state.cable_lengths.copy()
         
         # Compute delta lengths (meters)
@@ -505,7 +497,6 @@ class RobotVisualizer:
                 direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
         
-        # Motor 2 (BR) stays as zeros - reserved
         return command
     
     def _start_move_to(self, x: float, y: float):
@@ -546,11 +537,14 @@ class RobotVisualizer:
         self.state.is_moving = True
         
         # Compute cable deltas for logging
-        target_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
+        target_lengths = self.geometry.position_to_cable_lengths(target)
         delta_lengths = target_lengths - self.state.start_cable_lengths
         
         print(f"Moving to ({x:.3f}, {y:.3f}) - duration: {duration:.2f}s")
-        print(f"  Cable deltas: TL={delta_lengths[0]:+.4f} TR={delta_lengths[1]:+.4f} BL={delta_lengths[2]:+.4f}")
+        print(
+            f"  Cable deltas: TL={delta_lengths[0]:+.4f} TR={delta_lengths[1]:+.4f} "
+            f"BL={delta_lengths[2]:+.4f} BR={delta_lengths[3]:+.4f}"
+        )
     
     def _forward_to_real_robot(self, cmd: str) -> str:
         """Forward command to real robot (proxy mode)."""

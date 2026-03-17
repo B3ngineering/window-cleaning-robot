@@ -120,37 +120,41 @@ class CableGeometry:
     def cable_lengths_to_position(self, lengths: np.ndarray) -> Optional[np.ndarray]:
         """
         Forward kinematics: cable lengths -> position.
-        
-        Uses trilateration with first 3 cables (over-constrained system).
+
+        Uses all 4 cables in an overdetermined least-squares solve.
         
         Args:
             lengths: Array of 4 cable lengths
             
         Returns:
-            (x, y) position of robot center, or None if singular
+            (x, y) position of robot center, or None if unsolvable
         """
-        # Shift anchors by attachment offsets to solve for robot center
-        anchor_points = self.anchors - self.attachments
-        
-        # Set up linear system from 2 equations (using cables 0, 1, 2)
-        A = np.array([
-            [2 * (anchor_points[2][0] - anchor_points[0][0]),
-             2 * (anchor_points[2][1] - anchor_points[0][1])],
-            [2 * (anchor_points[2][0] - anchor_points[1][0]),
-             2 * (anchor_points[2][1] - anchor_points[1][1])],
-        ])
+        lengths = np.asarray(lengths, dtype=float)
+        if lengths.shape != (4,) or np.any(lengths <= 0):
+            return None
 
-        b = np.array([
-            lengths[0]**2 - lengths[2]**2 
-            - np.dot(anchor_points[0], anchor_points[0]) 
-            + np.dot(anchor_points[2], anchor_points[2]),
-            lengths[1]**2 - lengths[2]**2 
-            - np.dot(anchor_points[1], anchor_points[1]) 
-            + np.dot(anchor_points[2], anchor_points[2])
-        ])
+        # Shift anchors by attachment offsets to solve for robot center.
+        # We solve ||p - (anchor_i - attachment_i)|| = length_i
+        # by subtracting equation 0 from equations 1..3.
+        anchor_points = self.anchors - self.attachments
+        p0 = anchor_points[0]
+        l0 = lengths[0]
+
+        A_rows = []
+        b_rows = []
+        for i in range(1, 4):
+            pi = anchor_points[i]
+            li = lengths[i]
+            A_rows.append(2.0 * (pi - p0))
+            b_rows.append((l0 * l0) - (li * li) + np.dot(pi, pi) - np.dot(p0, p0))
+
+        A = np.vstack(A_rows)
+        b = np.array(b_rows)
 
         try:
-            position = np.linalg.solve(A, b)
+            position, _, rank, _ = np.linalg.lstsq(A, b, rcond=None)
+            if rank < 2:
+                return None
             return position
         except np.linalg.LinAlgError:
             return None

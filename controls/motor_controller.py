@@ -2,10 +2,10 @@
 Motor controller for 4-motor cable window cleaning robot.
 
 Handles position tracking, kinematics computation, and motor command generation.
-Uses 3 active cables: TL, TR, BL. Motor 2 (BR) reserved.
+Uses all 4 cables: TL, TR, BL, BR.
 
 Internal motor indices:
-    BL=0, TR=1, BR=2 (reserved), TL=3
+    BL=0, TR=1, BR=2, TL=3
 
 STM32 motor IDs:
     BR=1, TL=2, BL=3, TR=4
@@ -28,16 +28,16 @@ from kinematics import CableGeometry, RobotConfig, load_config
 # Motor indices (matching serial code)
 MOTOR_BL = 0  # Bottom-Left
 MOTOR_TR = 1  # Top-Right
-MOTOR_BR = 2  # Bottom-Right (reserved, sends zeros)
+MOTOR_BR = 2  # Bottom-Right
 MOTOR_TL = 3  # Top-Left
 
-NUM_CABLES = 3   # Active cables for kinematics
+NUM_CABLES = 4   # Active cables for kinematics
 NUM_MOTORS = 4   # Total motors in command structure
 
 # Active motors and their corresponding geometry/cable indices
 # Geometry order from kinematics: [TL=0, TR=1, BL=2, BR=3]
-ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_TL]  # Motors 0, 1, 3
-MOTOR_TO_CABLE = [2, 1, None, 0]  # Motor index -> cable/geometry index (None = reserved)
+ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_BR, MOTOR_TL]  # Motors 0, 1, 2, 3
+MOTOR_TO_CABLE = [2, 1, 3, 0]  # Motor index -> cable/geometry index
 
 # Direction encoding used internally by the controller.
 # The top motors (TL/TR) match this encoding on the wire, while the
@@ -80,7 +80,7 @@ class MoveCommand:
 
 class MotorController:
     """
-    Controls 3-cable robot positioning using kinematics.
+    Controls 4-cable robot positioning using kinematics.
     
     Tracks current position and generates coordinated motor commands
     for smooth motion to target positions. Communicates with STM32
@@ -112,7 +112,7 @@ class MotorController:
         
         # Current state
         self._position = self.geometry.get_home_position()
-        self._cable_lengths = self.geometry.position_to_cable_lengths(self._position)[:NUM_CABLES]
+        self._cable_lengths = self.geometry.position_to_cable_lengths(self._position)
         self._is_moving = False
         self._paused = False
     
@@ -153,7 +153,7 @@ class MotorController:
     
     @property
     def cable_lengths(self) -> np.ndarray:
-        """Current cable lengths for 3 cables."""
+        """Current cable lengths for 4 cables."""
         return self._cable_lengths.copy()
     
     @property
@@ -172,7 +172,7 @@ class MotorController:
             return False
         
         self._position = np.array([x, y])
-        self._cable_lengths = self.geometry.position_to_cable_lengths(self._position)[:NUM_CABLES]
+        self._cable_lengths = self.geometry.position_to_cable_lengths(self._position)
         return True
     
     def validate_target(self, x: float, y: float) -> Tuple[bool, str]:
@@ -194,7 +194,7 @@ class MotorController:
             return None
         
         target = np.array([target_x, target_y])
-        target_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
+        target_lengths = self.geometry.position_to_cable_lengths(target)
         
         # Compute delta lengths (meters)
         delta_lengths = (target_lengths - self._cable_lengths) # * 2 for actual carriage
@@ -223,8 +223,6 @@ class MotorController:
                 direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
         
-        # Motor 2 (BR) stays as zeros - reserved for future use
-        
         return command
     
     def goto(self, x: float, y: float) -> bool:
@@ -250,10 +248,10 @@ class MotorController:
             return True
 
         target = np.array([x, y])
-        target_cable_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
+        target_cable_lengths = self.geometry.position_to_cable_lengths(target)
         delta_lengths = target_cable_lengths - self._cable_lengths
 
-        cable_names = ["TL", "TR", "BL"]
+        cable_names = ["TL", "TR", "BL", "BR"]
         print("Cable move plan:")
         print(f"  {'Cable':<6} {'Current (m)':>12} {'Target (m)':>12} {'Delta (m)':>10} {'Direction'}")
         print(f"  {'-'*6} {'-'*12} {'-'*12} {'-'*10} {'-'*12}")
@@ -412,6 +410,10 @@ class MotorController:
                 return DIR_CCW
         elif motor_idx == MOTOR_TR:
             return direction
+        elif motor_idx == MOTOR_BR:
+            return direction
+
+        return direction
 
 
 
