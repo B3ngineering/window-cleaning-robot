@@ -5,12 +5,12 @@ frame:
 
 # Platform Dimensions (meters)
 robot:
-  width: 0.2
-  height: 0.3
+  width: 0.3 # 0.2
+  height: 0.44 # 0.3
 
 # Motor Configuration
 motor:
-  spool_radius: 0.025      # Radius of cable spool (m)
+  spool_radius: 0.0254      # Radius of cable spool (m)
   steps_per_rev: 1600     # 200 steps/rev * 16 microsteps
   max_speed_rpm: 30
 
@@ -21,7 +21,7 @@ motion:
 
 # Serial Port Configuration
 serial:
-  motor_port: "/dev/ttyUSB0"
+  motor_port: "/dev/ttyACM0"
   sensor_port: "/dev/ttyUSB1"
   baud_rate: 115200
   timeout: 1.0

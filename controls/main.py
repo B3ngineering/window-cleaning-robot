@@ -129,9 +129,9 @@ def main():
     def run_clean_command():
         nonlocal mode
 
-        if camera is None:
-            print("Cannot run clean routine: camera is not available")
-            return
+        # if camera is None:
+        #     print("Cannot run clean routine: camera is not available")
+        #     return
 
         workspace_min = motor_controller.geometry.workspace_min
         workspace_max = motor_controller.geometry.workspace_max
@@ -146,7 +146,7 @@ def main():
 
             mode = 'CLEANING'
             print(f"[clean] Attempt {attempt}/{CLEAN_MAX_ATTEMPTS}: CLEANING down to y={bottom_y:.3f}")
-            camera.stop()
+            # camera.stop()
 
             if serial_stream is not None:
                 serial_stream.start_cleaning_motors()
@@ -176,15 +176,15 @@ def main():
 
             decision = run_camera_cleanliness_vote()
             print(f"[clean] CHECKING result: {decision}")
-            camera.stop()
+            # camera.stop()
 
             if decision == "clean":
                 clean_confirmed = True
             else:
                 print("[clean] Window still dirty, repeating CLEANING pass")
 
-        if camera is not None:
-            camera.stop()
+        # if camera is not None:
+        #     camera.stop()
 
         mode = 'IDLE'
         if clean_confirmed:
