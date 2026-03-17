@@ -104,8 +104,6 @@ class MotorController:
         print(self.spool_radius)
         self.position_tolerance = self.config_dict.get('motion', {}).get('position_tolerance', 0.01)
         
-        # Serial connection to motor STM32        # if camera is not None:
-        #     camera.stop()
         serial_config = self.config_dict.get('serial', {})
         self.motor_port = serial_config.get('motor_port', '/dev/ttyUSB0')
         self.baud_rate = serial_config.get('baud_rate', 115200)
@@ -199,7 +197,7 @@ class MotorController:
         target_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
         
         # Compute delta lengths (meters)
-        delta_lengths = (target_lengths - self._cable_lengths) * 2
+        delta_lengths = (target_lengths - self._cable_lengths) # * 2 for actual carriage
         
         # Convert delta lengths to rotations
         # rotations = delta_length / (2 * pi * spool_radius)

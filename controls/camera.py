@@ -6,14 +6,14 @@ import cv2
 from ultralytics import YOLO
 
 
-DEFAULT_MODEL_PATH = "runs/classify/train3/weights/best.pt"
+DEFAULT_MODEL_PATH = "/home/sohailpi/window-cleaning-robot/sensing/window_classifier/runs/classify/train5/weights/best.pt"
 
 
 class OnboardCameraStream:
     def __init__(
         self,
         model_path=DEFAULT_MODEL_PATH,
-        camera_index=1,
+        camera_index=0,
         dirty_threshold=0.7,
         frame_width=640,
         frame_height=480,
