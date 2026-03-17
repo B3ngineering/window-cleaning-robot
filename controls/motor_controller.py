@@ -27,9 +27,9 @@ from kinematics import CableGeometry, RobotConfig, load_config
 
 # Motor indices (matching serial code)
 MOTOR_BL = 0  # Bottom-Left
-MOTOR_TR = 3  # Top-Right
+MOTOR_TR = 1  # Top-Right
 MOTOR_BR = 2  # Bottom-Right (reserved, sends zeros)
-MOTOR_TL = 1  # Top-Left
+MOTOR_TL = 3  # Top-Left
 
 NUM_CABLES = 3   # Active cables for kinematics
 NUM_MOTORS = 4   # Total motors in command structure
@@ -48,9 +48,9 @@ DIR_CW = 1   # Clockwise: shorten cable (wind)
 # STM32 board motor IDs from sample control code
 STM_MOTOR_IDS = {
     MOTOR_BR: 1,
-    MOTOR_TL: 2,
+    MOTOR_TL: 4,
     MOTOR_BL: 3,
-    MOTOR_TR: 4,
+    MOTOR_TR: 2,
 }
 
 
@@ -101,9 +101,9 @@ class MotorController:
         self.max_speed_rpm = self.config_dict.get('motor', {}).get('max_speed_rpm', 3000)
         self.steps_per_rev = self.config_dict.get('motor', {}).get('steps_per_rev', 3200)
         self.spool_radius = self.config_dict.get('motor', {}).get('spool_radius', 0.05)
+        print(self.spool_radius)
         self.position_tolerance = self.config_dict.get('motion', {}).get('position_tolerance', 0.01)
         
-        # Serial connection to motor STM32
         serial_config = self.config_dict.get('serial', {})
         self.motor_port = serial_config.get('motor_port', '/dev/ttyUSB0')
         self.baud_rate = serial_config.get('baud_rate', 115200)
@@ -197,13 +197,13 @@ class MotorController:
         target_lengths = self.geometry.position_to_cable_lengths(target)[:NUM_CABLES]
         
         # Compute delta lengths (meters)
-        delta_lengths = target_lengths - self._cable_lengths
+        delta_lengths = (target_lengths - self._cable_lengths) # * 2 for actual carriage
         
         # Convert delta lengths to rotations
         # rotations = delta_length / (2 * pi * spool_radius)
         spool_circumference = 2 * math.pi * self.spool_radius
         delta_rotations = delta_lengths / spool_circumference
-        
+        print(delta_rotations)
         # Compute coordinated speeds so all motors finish together
         abs_rotations = np.abs(delta_rotations)
         max_rotations = np.max(abs_rotations)
@@ -291,8 +291,8 @@ class MotorController:
             distance: Distance to move in meters
         """
         deltas = {
-            'up': (0, distance),
-            'down': (0, -distance),
+            'up': (0, -distance),
+            'down': (0, distance),
             'left': (-distance, 0),
             'right': (distance, 0),
         }
@@ -352,7 +352,7 @@ class MotorController:
             speed_enc = steps_per_sec // 10
             packet.extend([
                 motor_id,
-                direction,
+                0,
                 (speed_enc >> 8) & 0xFF,
                 speed_enc & 0xFF,
                 (pulses >> 8) & 0xFF,
@@ -400,9 +400,20 @@ class MotorController:
 
     def _encode_motor_direction(self, motor_idx: int, direction: int) -> int:
         """Convert controller direction to the motor's wiring-specific wire value."""
-        if motor_idx in (MOTOR_BL, MOTOR_BR):
-            return DIR_CW if direction == DIR_CCW else DIR_CCW
-        return direction
+        if motor_idx == MOTOR_BL:
+            if direction == DIR_CCW:
+                return DIR_CW
+            else:
+                return DIR_CCW
+        elif motor_idx == MOTOR_TL:
+            if direction == DIR_CCW:
+                return DIR_CW
+            else:
+                return DIR_CCW
+        elif motor_idx == MOTOR_TR:
+            return direction
+
+
 
     def _send_raw(self, packet: bytes):
         """Send raw binary packet to motor STM32 via serial."""
