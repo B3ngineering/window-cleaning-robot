@@ -2,7 +2,7 @@
 Motor controller for 4-motor cable window cleaning robot.
 
 Handles position tracking, kinematics computation, and motor command generation.
-Uses all 4 cables: TL, TR, BL, BR.
+All 4 cables are active with legacy speed-scaling preserved for BL/TR/TL.
 
 Internal motor indices:
     BL=0, TR=1, BR=2, TL=3
@@ -27,16 +27,17 @@ from kinematics import CableGeometry, RobotConfig, load_config
 
 # Motor indices (matching serial code)
 MOTOR_BL = 0  # Bottom-Left
-MOTOR_TR = 1  # Top-Right
+MOTOR_TR = 3  # Top-Right
 MOTOR_BR = 2  # Bottom-Right
-MOTOR_TL = 3  # Top-Left
+MOTOR_TL = 1  # Top-Left
 
 NUM_CABLES = 4   # Active cables for kinematics
 NUM_MOTORS = 4   # Total motors in command structure
 
 # Active motors and their corresponding geometry/cable indices
 # Geometry order from kinematics: [TL=0, TR=1, BL=2, BR=3]
-ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_BR, MOTOR_TL]  # Motors 0, 1, 2, 3
+LEGACY_ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_TL]  # Motors 0, 1, 3
+ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_BR, MOTOR_TL]
 MOTOR_TO_CABLE = [2, 1, 3, 0]  # Motor index -> cable/geometry index
 
 # Direction encoding used internally by the controller.
@@ -48,9 +49,9 @@ DIR_CW = 1   # Clockwise: shorten cable (wind)
 # STM32 board motor IDs from sample control code
 STM_MOTOR_IDS = {
     MOTOR_BR: 1,
-    MOTOR_TL: 4,
+    MOTOR_TL: 2,
     MOTOR_BL: 3,
-    MOTOR_TR: 2,
+    MOTOR_TR: 4,
 }
 
 
@@ -101,9 +102,9 @@ class MotorController:
         self.max_speed_rpm = self.config_dict.get('motor', {}).get('max_speed_rpm', 3000)
         self.steps_per_rev = self.config_dict.get('motor', {}).get('steps_per_rev', 3200)
         self.spool_radius = self.config_dict.get('motor', {}).get('spool_radius', 0.05)
-        print(self.spool_radius)
         self.position_tolerance = self.config_dict.get('motion', {}).get('position_tolerance', 0.01)
         
+        # Serial connection to motor STM32
         serial_config = self.config_dict.get('serial', {})
         self.motor_port = serial_config.get('motor_port', '/dev/ttyUSB0')
         self.baud_rate = serial_config.get('baud_rate', 115200)
@@ -153,7 +154,7 @@ class MotorController:
     
     @property
     def cable_lengths(self) -> np.ndarray:
-        """Current cable lengths for 4 cables."""
+        """Current cable lengths for all 4 cables [TL, TR, BL, BR]."""
         return self._cable_lengths.copy()
     
     @property
@@ -197,31 +198,48 @@ class MotorController:
         target_lengths = self.geometry.position_to_cable_lengths(target)
         
         # Compute delta lengths (meters)
-        delta_lengths = (target_lengths - self._cable_lengths) # * 2 for actual carriage
+        delta_lengths = target_lengths - self._cable_lengths
         
         # Convert delta lengths to rotations
         # rotations = delta_length / (2 * pi * spool_radius)
         spool_circumference = 2 * math.pi * self.spool_radius
         delta_rotations = delta_lengths / spool_circumference
-        print(delta_rotations)
-        # Compute coordinated speeds so all motors finish together
-        abs_rotations = np.abs(delta_rotations)
-        max_rotations = np.max(abs_rotations)
         
-        if max_rotations < 0.001:  # Less than 1/1000 of a rotation - already at target
+        # Compute coordinated speeds so all motors finish together.
+        # Preserve legacy behavior by using BL/TR/TL as the reference set,
+        # so these three commands stay unchanged compared with 3-motor mode.
+        abs_rotations = np.abs(delta_rotations)
+        legacy_cable_indices = [MOTOR_TO_CABLE[m] for m in LEGACY_ACTIVE_MOTORS]
+        max_legacy_rotations = np.max(abs_rotations[legacy_cable_indices])
+
+        if max_legacy_rotations < 0.001 and abs_rotations[MOTOR_TO_CABLE[MOTOR_BR]] < 0.001:
             return None
+
+        # If only BR needs correction, use BR as the reference.
+        # Otherwise keep the legacy 3-motor reference unchanged.
+        speed_reference_rotations = max_legacy_rotations
+        if speed_reference_rotations < 0.001:
+            speed_reference_rotations = abs_rotations[MOTOR_TO_CABLE[MOTOR_BR]]
         
         # Build command for all 4 motors
         # Map geometry/cable indices to motor indices
         command = MoveCommand()
-        for motor_idx in ACTIVE_MOTORS:
+        for motor_idx in LEGACY_ACTIVE_MOTORS:
             cable_idx = MOTOR_TO_CABLE[motor_idx]
             if abs_rotations[cable_idx] > 0.001:
                 # Scale speed proportionally so all motors finish at same time
-                speed = (abs_rotations[cable_idx] / max_rotations) * self.max_speed_rpm
+                speed = (abs_rotations[cable_idx] / speed_reference_rotations) * self.max_speed_rpm
                 # Direction: positive delta = lengthen cable (CCW=0), negative = shorten (CW=1)
                 direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
+
+        # Add BR command without changing legacy BL/TR/TL outputs.
+        br_cable_idx = MOTOR_TO_CABLE[MOTOR_BR]
+        if abs_rotations[br_cable_idx] > 0.001:
+            br_speed = (abs_rotations[br_cable_idx] / speed_reference_rotations) * self.max_speed_rpm
+            br_speed = min(br_speed, self.max_speed_rpm)
+            br_direction = DIR_CCW if delta_rotations[br_cable_idx] >= 0 else DIR_CW
+            command.motors[MOTOR_BR] = [br_direction, abs(delta_rotations[br_cable_idx]), br_speed]
         
         return command
     
@@ -289,8 +307,8 @@ class MotorController:
             distance: Distance to move in meters
         """
         deltas = {
-            'up': (0, -distance),
-            'down': (0, distance),
+            'up': (0, distance),
+            'down': (0, -distance),
             'left': (-distance, 0),
             'right': (distance, 0),
         }
@@ -350,7 +368,7 @@ class MotorController:
             speed_enc = steps_per_sec // 10
             packet.extend([
                 motor_id,
-                0,
+                direction,
                 (speed_enc >> 8) & 0xFF,
                 speed_enc & 0xFF,
                 (pulses >> 8) & 0xFF,
@@ -398,24 +416,9 @@ class MotorController:
 
     def _encode_motor_direction(self, motor_idx: int, direction: int) -> int:
         """Convert controller direction to the motor's wiring-specific wire value."""
-        if motor_idx == MOTOR_BL:
-            if direction == DIR_CCW:
-                return DIR_CW
-            else:
-                return DIR_CCW
-        elif motor_idx == MOTOR_TL:
-            if direction == DIR_CCW:
-                return DIR_CW
-            else:
-                return DIR_CCW
-        elif motor_idx == MOTOR_TR:
-            return direction
-        elif motor_idx == MOTOR_BR:
-            return direction
-
+        if motor_idx in (MOTOR_BL, MOTOR_BR):
+            return DIR_CW if direction == DIR_CCW else DIR_CCW
         return direction
-
-
 
     def _send_raw(self, packet: bytes):
         """Send raw binary packet to motor STM32 via serial."""
