@@ -5,8 +5,8 @@ frame:
 
 # Platform Dimensions (meters)
 robot:
-  width: 0.3 # 0.2
-  height: 0.44 # 0.3
+  width: 0.2 # 0.2
+  height: 0.3 # 0.3
 
 # Motor Configuration
 motor:
