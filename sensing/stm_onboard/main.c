@@ -231,11 +231,22 @@ int main(void)
 //	        HAL_UART_Transmit(&huart2, &c, 1, HAL_MAX_DELAY);
 //	    }
 
+//	  if (echo_ready)
+//	  {
+//	      if (strncmp((char*)rx_buffer, "<CLEAN>", 7) == 0)
+//	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+//	      else if (strncmp((char*)rx_buffer, "<DIRTY>", 7) == 0)
+//	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+//
+//	      rx_index = 0;
+//	      echo_ready = 0;
+//	  }
+
 	  if (echo_ready)
 	  {
-	      if (strncmp((char*)rx_buffer, "<CLEAN>", 7) == 0)
-	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-	      else if (strncmp((char*)rx_buffer, "<DIRTY>", 7) == 0)
+	      if (strncmp((char*)rx_buffer, "<S_CLN>", 7) == 0) // turn on whatever pins to trigger motor
+	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); // whatever pins we change will need to add to the ioc
+	      else if (strncmp((char*)rx_buffer, "<STCLN>", 7) == 0) // turn on whatever pins to trigger motor
 	          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
 
 	      rx_index = 0;
