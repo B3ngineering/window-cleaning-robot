@@ -220,8 +220,24 @@ class MotorController:
                 # Scale speed proportionally so all motors finish at same time
                 speed = (abs_rotations[cable_idx] / max_rotations) * self.max_speed_rpm
                 # Direction: positive delta = lengthen cable (CCW=0), negative = shorten (CW=1)
-                direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
+                direction = (delta_rotations[cable_idx] >= 0)
+                if direction == 0 and motor_idx in (MOTOR_BL, MOTOR_TR):
+                    direction = DIR_CW
+                elif direction == 1 and motor_idx in (MOTOR_BL, MOTOR_TR):
+                    direction = DIR_CCW
+                elif direction == 0 and motor_idx in (MOTOR_TL, MOTOR_BR):
+                    direction = DIR_CCW
+                else:
+                    direction = DIR_CW
+
+                # direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
+                # if motor_idx in (MOTOR_BL, MOTOR_BR):
+                #     if direction == DIR_CCW:
+                #         direction = DIR_CW
+                #     else:
+                #         DIR_CCW
                 command.motors[motor_idx] = [direction, abs(delta_rotations[cable_idx]), speed]
+                
         
         return command
     
@@ -256,7 +272,7 @@ class MotorController:
         print(f"  {'Cable':<6} {'Current (m)':>12} {'Target (m)':>12} {'Delta (m)':>10} {'Direction'}")
         print(f"  {'-'*6} {'-'*12} {'-'*12} {'-'*10} {'-'*12}")
         for i, name in enumerate(cable_names):
-            direction_label = "unwind (CCW)" if delta_lengths[i] >= 0 else "wind   (CW) "
+            direction_label = "unwind" if delta_lengths[i] >= 0 else "wind"
             print(
                 f"  {name:<6} {self._cable_lengths[i]:>12.4f} "
                 f"{target_cable_lengths[i]:>12.4f} "
@@ -278,6 +294,7 @@ class MotorController:
         """Move by relative offset."""
         target_x = self._position[0] + dx
         target_y = self._position[1] + dy
+        print('Moving to ' + str(target_x) + str(target_y))
         return self.goto(target_x, target_y)
     
     def move_direction(self, direction: str, distance: float = 0.05) -> bool:
@@ -398,20 +415,21 @@ class MotorController:
 
     def _encode_motor_direction(self, motor_idx: int, direction: int) -> int:
         """Convert controller direction to the motor's wiring-specific wire value."""
-        if motor_idx == MOTOR_BL:
-            if direction == DIR_CCW:
-                return DIR_CW
-            else:
-                return DIR_CCW
-        elif motor_idx == MOTOR_TL:
-            if direction == DIR_CCW:
-                return DIR_CW
-            else:
-                return DIR_CCW
-        elif motor_idx == MOTOR_TR:
-            return direction
-        elif motor_idx == MOTOR_BR:
-            return direction
+        # if motor_idx == MOTOR_BL:
+        #     # if direction == DIR_CCW:
+        #     #     return DIR_CW
+        #     # else:
+        #     #     return DIR_CCW
+        #     return direction
+        # elif motor_idx == MOTOR_TL:
+        #     if direction == DIR_CCW:
+        #         return DIR_CW
+        #     else:
+        #         return DIR_CCW
+        # elif motor_idx == MOTOR_TR:
+        #     return direction
+        # elif motor_idx == MOTOR_BR:
+        #     return direction
 
         return direction
 

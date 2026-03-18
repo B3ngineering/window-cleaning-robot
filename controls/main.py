@@ -92,8 +92,8 @@ def main():
     # Connect to sensor STM32 (separate from motor controller)
     try:
         serial_stream = SerialStream(
-            port=motor_controller.config.get("sensor_port", "/dev/ttyUSB1"),
-            baudrate=motor_controller.config.get("sensor_baudrate", 115200),
+            port='/dev/ttyACM1',
+            baudrate=115200,
             event_queue=event_queue,
         ).start()
         print("Sensor STM32 connected on /dev/ttyUSB1")

@@ -56,10 +56,12 @@ class SerialStream:
     def start_cleaning_motors(self):
         """Placeholder for sensor-STM cleaning motor start commands."""
         print("[sensor-stm placeholder] start cleaning motors: continuous=ON, fixed-rotation=TRIGGER")
+        self.connection.write(b"<S_CLN>")
 
     def stop_cleaning_motors(self):
         """Placeholder for sensor-STM cleaning motor stop commands."""
         print("[sensor-stm placeholder] stop cleaning motors")
+        self.connection.write(b"<STCLN>")
 
     def _run(self):
         while not self.stop_event.is_set():
