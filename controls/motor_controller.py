@@ -101,7 +101,6 @@ class MotorController:
         self.max_speed_rpm = self.config_dict.get('motor', {}).get('max_speed_rpm', 3000)
         self.steps_per_rev = self.config_dict.get('motor', {}).get('steps_per_rev', 3200)
         self.spool_radius = self.config_dict.get('motor', {}).get('spool_radius', 0.05)
-        print(self.spool_radius)
         self.position_tolerance = self.config_dict.get('motion', {}).get('position_tolerance', 0.01)
         
         serial_config = self.config_dict.get('serial', {})
@@ -195,9 +194,17 @@ class MotorController:
         
         target = np.array([target_x, target_y])
         target_lengths = self.geometry.position_to_cable_lengths(target)
+
+        is_horizontal = (
+            abs(target[0] - self.position[0]) > self.position_tolerance and
+            abs(target[1] - self.position[1]) <= self.position_tolerance
+        )
         
         # Compute delta lengths (meters)
-        delta_lengths = (target_lengths - self._cable_lengths) # * 2 for actual carriage
+        
+        delta_lengths = (target_lengths - self._cable_lengths) * 4 # for actual carriage
+        delta_lengths[2] = delta_lengths[2] / 2
+        delta_lengths[3] = delta_lengths[3] / 2
         
         # Convert delta lengths to rotations
         # rotations = delta_length / (2 * pi * spool_radius)
@@ -230,6 +237,8 @@ class MotorController:
                 else:
                     direction = DIR_CW
 
+                if is_horizontal and motor_idx in (MOTOR_BL, MOTOR_BR):
+                    direction = DIR_CW if direction == DIR_CCW else DIR_CCW
                 # direction = DIR_CCW if delta_rotations[cable_idx] >= 0 else DIR_CW
                 # if motor_idx in (MOTOR_BL, MOTOR_BR):
                 #     if direction == DIR_CCW:
@@ -432,8 +441,6 @@ class MotorController:
         #     return direction
 
         return direction
-
-
 
     def _send_raw(self, packet: bytes):
         """Send raw binary packet to motor STM32 via serial."""
