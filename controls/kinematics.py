@@ -2,7 +2,7 @@
 Cable robot kinematics for window cleaning robot.
 
 Provides forward and inverse kinematics for a 4-cable parallel robot
-with rectangular platform and corner attachments.
+with dynamic cable attachments that slide on top/bottom semicircular rails.
 
 Coordinate system:
 - Origin at bottom-left anchor
@@ -35,6 +35,8 @@ class RobotConfig:
     frame_height: float
     robot_width: float
     robot_height: float
+    top_semicircle_radius: float
+    bottom_semicircle_radius: float
     spool_radius: float
     steps_per_rev: int
     safety_margin: float = 0.1
@@ -42,11 +44,15 @@ class RobotConfig:
     @classmethod
     def from_dict(cls, config: dict) -> 'RobotConfig':
         """Create RobotConfig from config dictionary."""
+        robot_cfg = config['robot']
+        default_radius = robot_cfg['width'] / 2.0
         return cls(
             frame_width=config['frame']['width'],
             frame_height=config['frame']['height'],
-            robot_width=config['robot']['width'],
-            robot_height=config['robot']['height'],
+            robot_width=robot_cfg['width'],
+            robot_height=robot_cfg['height'],
+            top_semicircle_radius=robot_cfg.get('top_semicircle_radius', default_radius),
+            bottom_semicircle_radius=robot_cfg.get('bottom_semicircle_radius', default_radius),
             spool_radius=config['motor']['spool_radius'],
             steps_per_rev=config['motor']['steps_per_rev'],
             safety_margin=config.get('motion', {}).get('safety_margin', 0.1)
@@ -57,8 +63,9 @@ class CableGeometry:
     """
     Cable kinematics for 4-cable parallel robot.
     
-    The platform is a rectangle with four cables attached to its corners.
-    Each cable connects a frame anchor to the corresponding corner of the robot.
+    Top cables (TL/TR) attach to a top semicircular rail, and bottom cables
+    (BL/BR) attach to a bottom semicircular rail. Each attachment point slides
+    along its semicircle to align with the cable direction, preserving robot pose.
     """
 
     def __init__(self, config: RobotConfig):
@@ -78,13 +85,13 @@ class CableGeometry:
             [config.frame_width, 0.0]                      # BR
         ])
 
-        # Attachment offsets relative to robot center
-        self.attachments = np.array([
-            [-config.robot_width / 2,  config.robot_height / 2],   # TL
-            [ config.robot_width / 2,  config.robot_height / 2],   # TR
-            [-config.robot_width / 2, -config.robot_height / 2],   # BL
-            [ config.robot_width / 2, -config.robot_height / 2]    # BR
-        ])
+        # Semicircle centers relative to robot center
+        self.top_semicircle_center_offset = np.array([0.0, config.robot_height / 2.0])
+        self.bottom_semicircle_center_offset = np.array([0.0, -config.robot_height / 2.0])
+
+        # Keep left cables on left half and right cables on right half.
+        # Geometry order: [TL, TR, BL, BR]
+        self._attachment_side_sign = np.array([-1.0, 1.0, -1.0, 1.0])
 
         # Workspace boundaries (robot center must stay within these)
         margin = config.safety_margin
@@ -97,9 +104,49 @@ class CableGeometry:
             config.frame_height - config.robot_height / 2 - margin
         ])
 
+    def _project_direction_to_semicircle(self, direction: np.ndarray, is_top: bool,
+                                         side_sign: float) -> np.ndarray:
+        """Project a direction onto the allowed semicircle sector."""
+        d = np.array(direction, dtype=float)
+        norm = np.linalg.norm(d)
+        if norm < 1e-9:
+            d = np.array([side_sign, 0.0], dtype=float)
+        else:
+            d = d / norm
+
+        # Top rail: y >= 0, Bottom rail: y <= 0
+        if is_top and d[1] < 0:
+            d[1] = 0.0
+        if (not is_top) and d[1] > 0:
+            d[1] = 0.0
+
+        # Left cable stays on x <= 0, right cable stays on x >= 0
+        if side_sign < 0 and d[0] > 0:
+            d[0] = 0.0
+        if side_sign > 0 and d[0] < 0:
+            d[0] = 0.0
+
+        norm = np.linalg.norm(d)
+        if norm < 1e-9:
+            return np.array([side_sign, 0.0], dtype=float)
+        return d / norm
+
     def get_attachment_point(self, robot_center: np.ndarray, index: int) -> np.ndarray:
-        """Get world coordinates of attachment point given robot center position."""
-        return robot_center + self.attachments[index]
+        """Get dynamic world attachment point for cable index [TL, TR, BL, BR]."""
+        is_top = index in (MOTOR_TL, MOTOR_TR)
+        side_sign = self._attachment_side_sign[index]
+
+        if is_top:
+            rail_center = robot_center + self.top_semicircle_center_offset
+            radius = self.config.top_semicircle_radius
+        else:
+            rail_center = robot_center + self.bottom_semicircle_center_offset
+            radius = self.config.bottom_semicircle_radius
+
+        # Frictionless slider on rail tends to align cable with local radius.
+        desired_dir = self.anchors[index] - rail_center
+        rail_dir = self._project_direction_to_semicircle(desired_dir, is_top, side_sign)
+        return rail_center + radius * rail_dir
 
     def position_to_cable_lengths(self, robot_center: np.ndarray) -> np.ndarray:
         """
@@ -129,31 +176,47 @@ class CableGeometry:
         Returns:
             (x, y) position of robot center, or None if singular
         """
-        # Shift anchors by attachment offsets to solve for robot center
-        anchor_points = self.anchors - self.attachments
-        
-        # Set up linear system from 2 equations (using cables 0, 1, 2)
-        A = np.array([
-            [2 * (anchor_points[2][0] - anchor_points[0][0]),
-             2 * (anchor_points[2][1] - anchor_points[0][1])],
-            [2 * (anchor_points[2][0] - anchor_points[1][0]),
-             2 * (anchor_points[2][1] - anchor_points[1][1])],
-        ])
-
-        b = np.array([
-            lengths[0]**2 - lengths[2]**2 
-            - np.dot(anchor_points[0], anchor_points[0]) 
-            + np.dot(anchor_points[2], anchor_points[2]),
-            lengths[1]**2 - lengths[2]**2 
-            - np.dot(anchor_points[1], anchor_points[1]) 
-            + np.dot(anchor_points[2], anchor_points[2])
-        ])
-
-        try:
-            position = np.linalg.solve(A, b)
-            return position
-        except np.linalg.LinAlgError:
+        if len(lengths) != 4:
             return None
+
+        # Nonlinear least-squares solve (Gauss-Newton) because attachment points
+        # move with position on semicircular rails.
+        position = self.get_home_position().astype(float)
+        step = 1e-4
+
+        for _ in range(30):
+            predicted = self.position_to_cable_lengths(position)
+            residual = predicted - lengths
+
+            if np.linalg.norm(residual) < 1e-6:
+                break
+
+            jacobian = np.zeros((4, 2), dtype=float)
+            for axis in range(2):
+                offset = np.zeros(2, dtype=float)
+                offset[axis] = step
+                plus = self.position_to_cable_lengths(position + offset)
+                minus = self.position_to_cable_lengths(position - offset)
+                jacobian[:, axis] = (plus - minus) / (2.0 * step)
+
+            try:
+                delta, *_ = np.linalg.lstsq(jacobian, -residual, rcond=None)
+            except np.linalg.LinAlgError:
+                return None
+
+            position = position + delta
+
+            # Keep iterate in workspace neighborhood for stable convergence.
+            position[0] = float(np.clip(position[0], self.workspace_min[0], self.workspace_max[0]))
+            position[1] = float(np.clip(position[1], self.workspace_min[1], self.workspace_max[1]))
+
+            if np.linalg.norm(delta) < 1e-7:
+                break
+
+        final_error = np.linalg.norm(self.position_to_cable_lengths(position) - lengths)
+        if final_error > 5e-3:
+            return None
+        return position
 
     def is_in_workspace(self, position: np.ndarray) -> bool:
         """Check if position is within valid workspace bounds."""

@@ -7,6 +7,8 @@ frame:
 robot:
   width: 0.3 # 0.2
   height: 0.45 # 0.3
+  top_semicircle_radius: 0.15
+  bottom_semicircle_radius: 0.15
 
 # Motor Configuration
 motor:
