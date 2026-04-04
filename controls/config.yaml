@@ -11,8 +11,15 @@ robot:
 # Motor Configuration
 motor:
   spool_radius: 0.0254      # Radius of cable spool (m)
+  spool_width: 0.02         # Usable spool width along axle (m)
+  strap_thickness: 0.001    # Strap thickness; increases radius each radial layer (m)
+  strap_width: 0.01         # Strap width laid along spool width (m)
+  wrap_integration_step: 0.002  # Integration segment for variable-radius conversion (m)
+  initial_wound_turns: [0, 0, 0, 0]  # BL, TR, BR, TL estimated turns initially on spool
   steps_per_rev: 1600     # 200 steps/rev * 16 microsteps
   max_speed_rpm: 30
+  cable_thickness: 0.001
+  initial_length: # Calculate based on center position
 
 # Motion Control
 motion:

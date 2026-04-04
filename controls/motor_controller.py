@@ -38,6 +38,7 @@ NUM_MOTORS = 4   # Total motors in command structure
 # Geometry order from kinematics: [TL=0, TR=1, BL=2, BR=3]
 ACTIVE_MOTORS = [MOTOR_BL, MOTOR_TR, MOTOR_BR, MOTOR_TL]  # Motors 0, 1, 2, 3
 MOTOR_TO_CABLE = [2, 1, 3, 0]  # Motor index -> cable/geometry index
+CABLE_TO_MOTOR = {cable_idx: motor_idx for motor_idx, cable_idx in enumerate(MOTOR_TO_CABLE)}
 
 # Direction encoding used internally by the controller.
 # The top motors (TL/TR) match this encoding on the wire, while the
@@ -98,9 +99,21 @@ class MotorController:
         self.robot_config = RobotConfig.from_dict(self.config_dict)
         self.geometry = CableGeometry(self.robot_config)
         
-        self.max_speed_rpm = self.config_dict.get('motor', {}).get('max_speed_rpm', 3000)
-        self.steps_per_rev = self.config_dict.get('motor', {}).get('steps_per_rev', 3200)
-        self.spool_radius = self.config_dict.get('motor', {}).get('spool_radius', 0.05)
+        motor_cfg = self.config_dict.get('motor', {})
+        self.max_speed_rpm = motor_cfg.get('max_speed_rpm', 3000)
+        self.steps_per_rev = motor_cfg.get('steps_per_rev', 3200)
+        self.spool_radius = motor_cfg.get('spool_radius', 0.05)
+        self.spool_width = motor_cfg.get('spool_width', 0.02)
+        self.strap_thickness = motor_cfg.get('strap_thickness', motor_cfg.get('cable_thickness', 0.001))
+        self.strap_width = motor_cfg.get('strap_width', 0.01)
+        self.wrap_integration_step = motor_cfg.get('wrap_integration_step', 0.002)
+
+        initial_turns = motor_cfg.get('initial_wound_turns')
+        if isinstance(initial_turns, list) and len(initial_turns) == NUM_MOTORS:
+            self._wound_turns = np.array(initial_turns, dtype=float)
+        else:
+            self._wound_turns = np.zeros(NUM_MOTORS, dtype=float)
+
         self.position_tolerance = self.config_dict.get('motion', {}).get('position_tolerance', 0.01)
         
         serial_config = self.config_dict.get('serial', {})
@@ -206,10 +219,18 @@ class MotorController:
         delta_lengths[2] = delta_lengths[2] / 2
         delta_lengths[3] = delta_lengths[3] / 2
         
-        # Convert delta lengths to rotations
-        # rotations = delta_length / (2 * pi * spool_radius)
-        spool_circumference = 2 * math.pi * self.spool_radius
-        delta_rotations = delta_lengths / spool_circumference
+        # Convert delta lengths to rotations with variable effective spool radius.
+        # Positive delta length = unwind (lengthen), negative = wind (shorten).
+        delta_rotations = np.zeros(NUM_CABLES, dtype=float)
+        predicted_turns = self._wound_turns.copy()
+        for cable_idx in range(NUM_CABLES):
+            motor_idx = CABLE_TO_MOTOR[cable_idx]
+            delta_rotations[cable_idx] = self._delta_length_to_rotations(
+                motor_idx,
+                float(delta_lengths[cable_idx]),
+                predicted_turns,
+            )
+
         print(delta_rotations)
         # Compute coordinated speeds so all motors finish together
         abs_rotations = np.abs(delta_rotations)
@@ -295,6 +316,7 @@ class MotorController:
         # Update internal state (assume move completes)
         self._position = target
         self._cable_lengths = target_cable_lengths
+        self._update_wound_turns_from_delta_lengths(delta_lengths)
         self._is_moving = False
         
         return True
@@ -441,6 +463,58 @@ class MotorController:
         #     return direction
 
         return direction
+
+    def _turns_per_layer(self) -> float:
+        """Number of strap turns needed to build one radial layer."""
+        if self.spool_width <= 0 or self.strap_width <= 0:
+            return 1.0
+        return max(1e-6, self.spool_width / self.strap_width)
+
+    def _effective_spool_radius(self, wound_turns: float) -> float:
+        """Effective radius from stacked strap layers."""
+        layers = max(0.0, wound_turns) / self._turns_per_layer()
+        return max(1e-6, self.spool_radius + layers * max(0.0, self.strap_thickness))
+
+    def _delta_length_to_rotations(self, motor_idx: int, delta_length: float, turn_state: np.ndarray) -> float:
+        """
+        Convert cable length delta (m) to signed motor rotations using variable radius.
+
+        Positive delta_length = unwind (let out strap), negative = wind (take in strap).
+        The provided turn_state is updated in-place with predicted post-move turns.
+        """
+        magnitude = abs(delta_length)
+        if magnitude < 1e-9:
+            return 0.0
+
+        turns = float(turn_state[motor_idx])
+        rotations = 0.0
+        step_length = max(1e-5, float(self.wrap_integration_step))
+        remaining = magnitude
+        unwind = delta_length > 0
+
+        while remaining > 1e-9:
+            seg = min(step_length, remaining)
+            radius = self._effective_spool_radius(turns)
+            seg_turns = seg / (2 * math.pi * radius)
+            rotations += seg_turns
+
+            if unwind:
+                turns = max(0.0, turns - seg_turns)
+            else:
+                turns += seg_turns
+
+            remaining -= seg
+
+        turn_state[motor_idx] = turns
+        return rotations if unwind else -rotations
+
+    def _update_wound_turns_from_delta_lengths(self, delta_lengths: np.ndarray):
+        """Update wound-turn estimates after a completed move."""
+        updated_turns = self._wound_turns.copy()
+        for cable_idx in range(NUM_CABLES):
+            motor_idx = CABLE_TO_MOTOR[cable_idx]
+            self._delta_length_to_rotations(motor_idx, float(delta_lengths[cable_idx]), updated_turns)
+        self._wound_turns = updated_turns
 
     def _send_raw(self, packet: bytes):
         """Send raw binary packet to motor STM32 via serial."""
